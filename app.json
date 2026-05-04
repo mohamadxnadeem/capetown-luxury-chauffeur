@@ -46,7 +46,7 @@
       "expo-secure-store"
     ],
     "extra": {
-      "apiBaseUrl": "https://<your-railway-app>.railway.app",
+      "apiBaseUrl": "https://web-production-1ab9.up.railway.app",
       "eas": {
         "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
       }
