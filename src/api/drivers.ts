@@ -1,10 +1,15 @@
 import { api } from "./client";
-import { BlockedDate, Driver, PaymentSummary } from "./types";
+import { BlockedDate, CreateDriverPayload, Driver, PaymentSummary } from "./types";
 
 // Admin views
 export async function fetchDrivers(): Promise<Driver[]> {
   const resp = await api.get<Driver[] | { results: Driver[] }>("/api/admin/drivers/");
   return Array.isArray(resp.data) ? resp.data : resp.data.results ?? [];
+}
+
+export async function createDriver(payload: CreateDriverPayload): Promise<Driver> {
+  const resp = await api.post<Driver>("/api/admin/drivers/create/", payload);
+  return resp.data;
 }
 
 // Driver self-service

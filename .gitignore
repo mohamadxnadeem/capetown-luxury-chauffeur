@@ -11,6 +11,13 @@ npm-debug.*
 web-build/
 .env*
 !.env.example
+expo-qr.png
+
+# EAS / store secrets — never commit these
+google-play-service-account.json
+*.p8
+*.p12
+*.keystore
 
 # macOS
 .DS_Store

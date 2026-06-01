@@ -9,6 +9,7 @@ import { useAdminBookings } from "@/hooks/useBookings";
 import { useDriverSchedule } from "@/hooks/useSchedule";
 import type { Booking, DriverScheduleEvent } from "@/api/types";
 import type { RootStackParamList } from "@/navigation/types";
+import { calendarTheme, colors } from "@/theme";
 
 interface CalendarItem {
   key: string;
@@ -20,40 +21,34 @@ interface CalendarItem {
 }
 
 function adminBookingToItems(b: Booking): CalendarItem[] {
-  // Expand a booking across its days if available; otherwise fall back to
-  // start_date so something shows on the calendar.
-  if (Array.isArray(b.days) && b.days.length > 0) {
-    return b.days.map((d) => ({
-      key: `b${b.id}-d${d.id}`,
-      date: d.date,
-      title: b.customer_name ?? `Booking #${b.id}`,
-      subtitle: [d.start_time, d.pickup_location].filter(Boolean).join(" · "),
-      bookingId: b.id,
-      bookingRef: b.booking_ref,
-    }));
-  }
-  if (b.start_date) {
-    return [
-      {
-        key: `b${b.id}`,
-        date: b.start_date,
-        title: b.customer_name ?? `Booking #${b.id}`,
-        subtitle: b.status,
-        bookingId: b.id,
-        bookingRef: b.booking_ref,
-      },
-    ];
-  }
-  return [];
+  // Bookings always have at least one day per the create API contract, but
+  // guard against an empty list to keep the screen resilient.
+  if (!Array.isArray(b.days) || b.days.length === 0) return [];
+  return b.days.map((d) => ({
+    key: `b${b.id}-d${d.id}`,
+    date: d.date,
+    title: b.customer_name || `Booking #${b.id}`,
+    subtitle: [d.start_time, b.pickup_location].filter(Boolean).join(" · "),
+    bookingId: b.id,
+    bookingRef: b.booking_reference,
+  }));
 }
 
 function driverEventToItem(e: DriverScheduleEvent): CalendarItem {
+  if (e.type === "blocked") {
+    return {
+      key: e.id,
+      date: e.date,
+      title: e.title,
+      subtitle: e.reason ?? undefined,
+    };
+  }
   return {
-    key: `e${e.id}`,
+    key: e.id,
     date: e.date,
-    title: e.customer_name ?? e.booking_ref ?? "Trip",
+    title: e.customer_name || e.booking_reference,
     subtitle: [e.start_time, e.pickup_location].filter(Boolean).join(" · "),
-    bookingRef: e.booking_ref,
+    bookingRef: e.booking_reference,
   };
 }
 
@@ -81,11 +76,18 @@ export default function CalendarScreen() {
   const [selectedDate, setSelectedDate] = useState<string>(today);
 
   const marked = useMemo(() => {
-    const m: Record<string, { marked?: boolean; selected?: boolean; selectedColor?: string }> = {};
+    const m: Record<
+      string,
+      { marked?: boolean; selected?: boolean; selectedColor?: string; dotColor?: string }
+    > = {};
     for (const it of items) {
-      m[it.date] = { ...(m[it.date] ?? {}), marked: true };
+      m[it.date] = { ...(m[it.date] ?? {}), marked: true, dotColor: colors.primary };
     }
-    m[selectedDate] = { ...(m[selectedDate] ?? {}), selected: true, selectedColor: "#000" };
+    m[selectedDate] = {
+      ...(m[selectedDate] ?? {}),
+      selected: true,
+      selectedColor: colors.primary,
+    };
     return m;
   }, [items, selectedDate]);
 
@@ -100,57 +102,77 @@ export default function CalendarScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <Calendar
-        markedDates={marked}
-        onDayPress={(d: DateData) => setSelectedDate(d.dateString)}
-        enableSwipeMonths
-      />
-      <View style={styles.listHeader}>
-        <Text variant="titleMedium">{selectedDate}</Text>
-        <Text variant="bodySmall" style={styles.muted}>
-          {dayItems.length} item{dayItems.length === 1 ? "" : "s"}
-        </Text>
-      </View>
-      <FlatList
-        data={dayItems}
-        keyExtractor={(it) => it.key}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => refetch()} />
-        }
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.muted}>
-              {loading ? "Loading…" : "Nothing scheduled."}
+    <FlatList
+      style={styles.container}
+      data={dayItems}
+      keyExtractor={(it) => it.key}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => refetch()}
+          tintColor={colors.primary}
+        />
+      }
+      ListHeaderComponent={
+        <>
+          <Calendar
+            markedDates={marked}
+            onDayPress={(d: DateData) => setSelectedDate(d.dateString)}
+            enableSwipeMonths
+            theme={calendarTheme}
+          />
+          <View style={styles.listHeader}>
+            <Text variant="titleMedium" style={styles.listHeaderTitle}>
+              {selectedDate}
+            </Text>
+            <Text variant="bodySmall" style={styles.muted}>
+              {dayItems.length} item{dayItems.length === 1 ? "" : "s"}
             </Text>
           </View>
-        }
-        renderItem={({ item }) => (
-          <Card style={styles.card} onPress={() => onItemPress(item)}>
-            <Card.Content>
-              <Text variant="titleSmall">{item.title}</Text>
-              {item.subtitle ? (
-                <Text variant="bodySmall" style={styles.muted}>
-                  {item.subtitle}
-                </Text>
-              ) : null}
-            </Card.Content>
-          </Card>
-        )}
-      />
-    </View>
+        </>
+      }
+      ListEmptyComponent={
+        <View style={styles.empty}>
+          <Text style={styles.muted}>
+            {loading ? "Loading…" : "Nothing scheduled."}
+          </Text>
+        </View>
+      }
+      renderItem={({ item }) => (
+        <Card style={styles.card} onPress={() => onItemPress(item)}>
+          <Card.Content>
+            <Text variant="titleSmall">{item.title}</Text>
+            {item.subtitle ? (
+              <Text variant="bodySmall" style={styles.muted}>
+                {item.subtitle}
+              </Text>
+            ) : null}
+          </Card.Content>
+        </Card>
+      )}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.background },
   listHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
   },
-  card: { marginHorizontal: 16, marginVertical: 6 },
-  empty: { padding: 24, alignItems: "center" },
-  muted: { opacity: 0.6 },
+  listHeaderTitle: { color: colors.heading, fontWeight: "700" },
+  card: {
+    marginHorizontal: 16,
+    marginVertical: 6,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+  },
+  empty: { padding: 32, alignItems: "center" },
+  muted: { color: colors.muted },
 });

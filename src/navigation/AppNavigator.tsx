@@ -8,6 +8,11 @@ import * as Notifications from "expo-notifications";
 import { ActivityIndicator, View } from "react-native";
 import LoginScreen from "@/screens/LoginScreen";
 import BookingDetailScreen from "@/screens/BookingDetailScreen";
+import NewBookingScreen from "@/screens/NewBookingScreen";
+import VehicleDetailScreen from "@/screens/VehicleDetailScreen";
+import VehicleEditScreen from "@/screens/VehicleEditScreen";
+import VehicleSearchScreen from "@/screens/VehicleSearchScreen";
+import DriverListScreen from "@/screens/DriverListScreen";
 import AdminTabs from "@/navigation/AdminTabs";
 import DriverTabs from "@/navigation/DriverTabs";
 import { useAuthStore } from "@/state/auth";
@@ -15,6 +20,7 @@ import { detectRole } from "@/api/auth";
 import { setOnAuthFailure, tokenStorage } from "@/api/client";
 import { extractBookingFromNotification } from "@/utils/push";
 import type { RootStackParamList } from "@/navigation/types";
+import { colors, navTheme } from "@/theme";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -107,8 +113,15 @@ export default function AppNavigator() {
   }
 
   return (
-    <NavigationContainer ref={navRef}>
-      <Stack.Navigator>
+    <NavigationContainer ref={navRef} theme={navTheme}>
+      <Stack.Navigator
+        screenOptions={{
+          headerStyle: { backgroundColor: colors.primary },
+          headerTintColor: colors.onPrimary,
+          headerTitleStyle: { fontWeight: "700" },
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      >
         {!isAuthenticated ? (
           <Stack.Screen
             name="Login"
@@ -126,6 +139,31 @@ export default function AppNavigator() {
               name="BookingDetail"
               component={BookingDetailScreen}
               options={{ title: "Booking" }}
+            />
+            <Stack.Screen
+              name="BookingEdit"
+              component={NewBookingScreen}
+              options={{ title: "Edit Booking" }}
+            />
+            <Stack.Screen
+              name="VehicleDetail"
+              component={VehicleDetailScreen}
+              options={{ title: "Vehicle" }}
+            />
+            <Stack.Screen
+              name="VehicleEdit"
+              component={VehicleEditScreen}
+              options={{ title: "Edit Vehicle" }}
+            />
+            <Stack.Screen
+              name="VehicleSearch"
+              component={VehicleSearchScreen}
+              options={{ title: "Find Vehicles" }}
+            />
+            <Stack.Screen
+              name="DriverList"
+              component={DriverListScreen}
+              options={{ title: "Drivers" }}
             />
           </>
         )}

@@ -1,35 +1,70 @@
 {
   "expo": {
-    "name": "Capetown Luxury Chauffeur",
+    "name": "Cape Town Concierge",
     "slug": "capetown-luxury-chauffeur",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b5b33"
+    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.capetownluxurychauffeur.app",
+      "bundleIdentifier": "za.co.capetown-concierge",
+      "buildNumber": "1",
       "infoPlist": {
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification",
+          "remote-notification"
+        ],
+        "NSPhotoLibraryUsageDescription": "Cape Town Concierge needs access to your photos so you can upload vehicle images to the fleet.",
+        "NSCameraUsageDescription": "Cape Town Concierge needs camera access if you want to take a new photo of a vehicle.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.capetownluxurychauffeur.app",
-      "permissions": ["NOTIFICATIONS"]
+      "package": "za.co.capetownconcierge",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b5b33"
+      }
     },
     "notification": {
-      "color": "#000000",
+      "color": "#0b5b33",
       "androidMode": "default"
     },
     "plugins": [
       "expo-notifications",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-image-picker"
     ],
     "extra": {
       "apiBaseUrl": "https://web-production-1ab9.up.railway.app",
+      "clientBookingBaseUrl": "https://www.capetown-concierge.co.za",
+      "driverBookingBaseUrl": "https://web-production-1ab9.up.railway.app",
       "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+        "projectId": "10ca0ebb-3d3a-43eb-9e07-081491da0a76"
       }
+    },
+    "owner": "kingmo1997",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/10ca0ebb-3d3a-43eb-9e07-081491da0a76"
     }
   }
 }

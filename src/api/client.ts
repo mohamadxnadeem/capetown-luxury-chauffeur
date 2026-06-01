@@ -55,18 +55,43 @@ interface RetriableConfig extends AxiosRequestConfig {
 
 let refreshInflight: Promise<string | null> | null = null;
 
+// Single-flight refresh — N concurrent 401s share ONE refresh call so the
+// rotated refresh token isn't blacklisted out from under us by parallel
+// refresh attempts.
 async function refreshAccessToken(): Promise<string | null> {
   if (refreshInflight) return refreshInflight;
   refreshInflight = (async () => {
     try {
       const refresh = await tokenStorage.getRefresh();
       if (!refresh) return null;
-      const resp = await axios.post(`${apiBaseUrl}/api/users/token/refresh/`, { refresh });
+      const resp = await axios.post(
+        `${apiBaseUrl}/api/users/token/refresh/`,
+        { refresh },
+        { timeout: 15000 }
+      );
       const newAccess: string | undefined = resp.data?.access;
-      if (!newAccess) return null;
-      await tokenStorage.setAccess(newAccess);
+      const newRefresh: string | undefined = resp.data?.refresh;
+      if (!newAccess) {
+        console.warn("[auth] refresh response missing access token");
+        return null;
+      }
+      // ROTATE_REFRESH_TOKENS is enabled server-side — the response carries
+      // a fresh refresh token and the old one is rotated. Persist BOTH
+      // atomically; missing the new refresh = next refresh fails.
+      if (newRefresh) {
+        await tokenStorage.set(newAccess, newRefresh);
+      } else {
+        // Backend without rotation — keep the existing refresh token, just
+        // update access.
+        await tokenStorage.setAccess(newAccess);
+      }
       return newAccess;
-    } catch {
+    } catch (err) {
+      console.warn(
+        "[auth] refresh failed:",
+        (err as { response?: { status?: number } })?.response?.status ??
+          (err as Error)?.message
+      );
       return null;
     } finally {
       refreshInflight = null;
@@ -75,28 +100,53 @@ async function refreshAccessToken(): Promise<string | null> {
   return refreshInflight;
 }
 
+// Bail-to-login helper. Clears tokens then triggers the navigator swap
+// (AppNavigator registers an onAuthFailure handler that flips the auth store).
+async function bailToLogin(): Promise<void> {
+  await tokenStorage.clear();
+  onAuthFailure?.();
+}
+
 api.interceptors.response.use(
   (resp) => resp,
   async (error: AxiosError) => {
     const original = error.config as RetriableConfig | undefined;
     const status = error.response?.status;
 
-    if (status === 401 && original && !original._retried) {
-      // Don't try to refresh the refresh-token call itself.
-      const url = original.url ?? "";
-      if (url.includes("/api/users/token/refresh/") || url.includes("/api/users/login/")) {
-        return Promise.reject(error);
-      }
-      original._retried = true;
-      const newAccess = await refreshAccessToken();
-      if (newAccess) {
-        original.headers = { ...(original.headers ?? {}), Authorization: `Bearer ${newAccess}` };
-        return api.request(original);
-      }
-      await tokenStorage.clear();
-      onAuthFailure?.();
+    // Only the 401 path triggers refresh; everything else passes through.
+    if (status !== 401 || !original) {
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+
+    // The refresh / login calls themselves can't be refreshed — let the
+    // 401 propagate to the caller.
+    const url = original.url ?? "";
+    if (
+      url.includes("/api/users/token/refresh/") ||
+      url.includes("/api/users/login/")
+    ) {
+      return Promise.reject(error);
+    }
+
+    // Second 401 on the same request (we already refreshed once and the
+    // retry still failed) — auth is hosed, bail to login.
+    if (original._retried) {
+      await bailToLogin();
+      return Promise.reject(error);
+    }
+
+    original._retried = true;
+    const newAccess = await refreshAccessToken();
+    if (!newAccess) {
+      // Refresh failed — bail to login.
+      await bailToLogin();
+      return Promise.reject(error);
+    }
+
+    // Retry the original request. The request interceptor will pull the
+    // fresh access token from storage and attach it. If THIS retry also
+    // 401s, we hit the `_retried` branch above and bail.
+    return api.request(original);
   }
 );
 
