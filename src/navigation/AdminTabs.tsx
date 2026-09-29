@@ -3,9 +3,12 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import FinanceScreen from "@/screens/FinanceScreen";
 import HomeScreen from "@/screens/HomeScreen";
-import NewBookingScreen from "@/screens/NewBookingScreen";
+import InboxListScreen from "@/screens/InboxListScreen";
+import PackageListScreen from "@/screens/PackageListScreen";
 import ProfileScreen from "@/screens/ProfileScreen";
 import VehicleListScreen from "@/screens/VehicleListScreen";
+import AccommodationScreen from "@/screens/AccommodationScreen";
+import { useInboxConversations } from "@/hooks/useInbox";
 import { colors } from "@/theme";
 import type { AdminTabsParamList } from "@/navigation/types";
 
@@ -25,6 +28,15 @@ function tabIcon(filled: IconName, outline: IconName) {
 }
 
 export default function AdminTabs() {
+  // Show a badge on the Inbox tab when at least one draft is awaiting
+  // approval. Uses the same 30s poll the Inbox screen relies on so the
+  // badge stays fresh even on other tabs.
+  const inboxQuery = useInboxConversations();
+  const pendingDraftCount = (inboxQuery.data ?? []).reduce(
+    (n, c) => n + c.pending_approval_count,
+    0
+  );
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -52,6 +64,14 @@ export default function AdminTabs() {
         }}
       />
       <Tab.Screen
+        name="Inbox"
+        component={InboxListScreen}
+        options={{
+          tabBarIcon: tabIcon("email", "email-outline"),
+          tabBarBadge: pendingDraftCount > 0 ? pendingDraftCount : undefined,
+        }}
+      />
+      <Tab.Screen
         name="Finance"
         component={FinanceScreen}
         options={{
@@ -65,12 +85,19 @@ export default function AdminTabs() {
         options={{ tabBarIcon: tabIcon("car", "car-outline") }}
       />
       <Tab.Screen
-        name="New"
-        component={NewBookingScreen}
+        name="Accommodation"
+        component={AccommodationScreen}
         options={{
-          title: "New Booking",
-          tabBarLabel: "New",
-          tabBarIcon: tabIcon("plus-circle", "plus-circle-outline"),
+          headerShown: false,
+          tabBarLabel: "Stays",
+          tabBarIcon: tabIcon("bed", "bed-outline"),
+        }}
+      />
+      <Tab.Screen
+        name="Packages"
+        component={PackageListScreen}
+        options={{
+          tabBarIcon: tabIcon("gift", "gift-outline"),
         }}
       />
       <Tab.Screen

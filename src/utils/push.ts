@@ -48,9 +48,19 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   return token.data;
 }
 
+// Push notifications carry either a booking pointer (reminders,
+// draft bookings) OR a conversation pointer (Mailbot draft replies /
+// escalations). We extract both here — the AppNavigator picks a route
+// based on which one is populated (conversation wins if both, since it's
+// the more actionable place for the operator to land).
 export interface BookingNotificationPayload {
   booking_id?: number | string;
   booking_ref?: string;
+}
+
+export interface ConversationNotificationPayload {
+  conversation_id: number;
+  kind?: string;
 }
 
 export function extractBookingFromNotification(
@@ -65,4 +75,18 @@ export function extractBookingFromNotification(
     (data as { bookingRef?: string }).bookingRef;
   if (bookingId == null && !bookingRef) return null;
   return { booking_id: bookingId, booking_ref: bookingRef };
+}
+
+export function extractConversationFromNotification(
+  data: Notifications.NotificationContent["data"] | undefined
+): ConversationNotificationPayload | null {
+  if (!data) return null;
+  const raw =
+    (data as { conversation_id?: number | string }).conversation_id ??
+    (data as { conversationId?: number | string }).conversationId;
+  if (raw == null) return null;
+  const id = typeof raw === "string" ? parseInt(raw, 10) : raw;
+  if (isNaN(id)) return null;
+  const kind = (data as { kind?: string }).kind;
+  return { conversation_id: id, kind };
 }

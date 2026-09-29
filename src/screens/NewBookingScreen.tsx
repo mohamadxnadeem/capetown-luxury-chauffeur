@@ -5,6 +5,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  TouchableOpacity,
   View,
 } from "react-native";
 import {
@@ -29,12 +30,18 @@ import {
   useVehicleBookedSlots,
   useVehicleUnavailableDates,
 } from "@/hooks/useBookings";
+import { useCreateBookingGroup } from "@/hooks/useBookingGroups";
+import { useVillas } from "@/hooks/useVillas";
+import { useHotels } from "@/hooks/useHotels";
 import type { BookedSlot } from "@/api/bookings";
 import type {
   Booking,
   CreateBookingDayPayload,
+  CreateBookingGroupChildPayload,
+  CreateBookingGroupPayload,
   CreateBookingPayload,
   DayType,
+  DriverNested,
   Vehicle,
 } from "@/api/types";
 import type { RootStackParamList } from "@/navigation/types";
@@ -66,6 +73,13 @@ function newDayDetail(defaults?: {
 }
 
 interface FormState {
+  // When true, this is an accommodation-only booking — vehicleId stays
+  // null, driver picker is hidden, per-day rates are skipped, and
+  // pricing comes from customTotalClientAmount instead.
+  noVehicle: boolean;
+  // Operator-set total for accommodation-only bookings. Ignored when a
+  // vehicle is selected (rates on each day drive the total).
+  customTotalClientAmount: string;
   vehicleId: number | null;
   // null means "use the vehicle's default driver" — the backend will fall back
   // to vehicle.driver. Set explicitly when the operator picks a driver
@@ -84,9 +98,75 @@ interface FormState {
   pickupLocation: string;
   dropoffLocation: string;
   tripDescription: string;
+  // Proposal bundle add-ons. All optional — a vehicle-only booking leaves
+  // them at their defaults (empty arrays). When set, they appear on the
+  // client confirmation page as separate sections.
+  //
+  // Accommodation is now segmented: each entry is a stay at a villa OR
+  // hotel over a specific date range. `villa_id` on the write payload is
+  // derived from the FIRST villa segment as a legacy-compat fallback.
+  accommodationSegments: SegmentDraft[];
+  // Multi-vehicle proposal support: when this array is non-empty, the
+  // primary vehicle above becomes "vehicle 1" and these become vehicles
+  // 2..N. On submit, the app POSTs a BookingGroup with ONE combined
+  // Yoco link instead of N standalone bookings.
+  additionalVehicles: AdditionalVehicleDraft[];
+  // Only shown / used when additionalVehicles.length > 0. This is the
+  // client-facing proposal title on the group. Falls back to a generated
+  // "N-vehicle proposal for <customer>" if left blank.
+  proposalTitle: string;
+}
+
+interface SegmentDraft {
+  start_date: string; // YYYY-MM-DD, must be inside form.selectedDates
+  end_date: string; // YYYY-MM-DD
+  kind: "villa" | "hotel";
+  villa_id: number | null;
+  hotel_id: number | null;
+  notes: string;
+}
+
+// An additional vehicle entry on a multi-vehicle proposal. Shares the
+// primary vehicle's dates by default so most proposals need to fill in
+// just a vehicle + rate. The operator can also override pickup/dropoff
+// and add per-vehicle notes.
+interface AdditionalVehicleDraft {
+  vehicleId: number | null;
+  driverId: number | null;
+  // R/day flat rate — applied to every date the primary booking covers.
+  clientRatePerDay: string;
+  driverRatePerDay: string;
+  pickupLocation: string;
+  dropoffLocation: string;
+  tripDescription: string;
+}
+
+function newAdditionalVehicle(): AdditionalVehicleDraft {
+  return {
+    vehicleId: null,
+    driverId: null,
+    clientRatePerDay: "",
+    driverRatePerDay: "",
+    pickupLocation: "",
+    dropoffLocation: "",
+    tripDescription: "",
+  };
+}
+
+function newSegment(defaultStart?: string, defaultEnd?: string): SegmentDraft {
+  return {
+    start_date: defaultStart ?? "",
+    end_date: defaultEnd ?? defaultStart ?? "",
+    kind: "villa",
+    villa_id: null,
+    hotel_id: null,
+    notes: "",
+  };
 }
 
 const EMPTY_FORM: FormState = {
+  noVehicle: false,
+  customTotalClientAmount: "",
   vehicleId: null,
   driverId: null,
   selectedDates: [],
@@ -99,6 +179,9 @@ const EMPTY_FORM: FormState = {
   pickupLocation: "",
   dropoffLocation: "",
   tripDescription: "",
+  accommodationSegments: [],
+  additionalVehicles: [],
+  proposalTitle: "",
 };
 
 // "2026-06-12" → "Fri, 12 Jun"
@@ -135,6 +218,11 @@ function bookingToForm(b: Booking): FormState {
   }
   const first = days[0];
   return {
+    // Existing bookings with no car are treated as accommodation-only.
+    noVehicle: b.car == null,
+    // Backend derives total from days when car is set; when it isn't,
+    // read whatever total the backend returned so the operator can edit.
+    customTotalClientAmount: b.car == null ? (b.total_client_amount ?? "") : "",
     vehicleId: b.car?.id ?? null,
     driverId: b.driver?.id ?? null,
     selectedDates: days.map((d) => d.date).sort(),
@@ -143,10 +231,40 @@ function bookingToForm(b: Booking): FormState {
     customerName: b.customer_name ?? "",
     customerPhone: b.customer_phone ?? "",
     customerEmail: b.customer_email ?? "",
+    // Prefer new-shape segments when the backend returns them; fall back
+    // to the legacy single villa so pre-migration bookings still open
+    // with something in the accommodation section.
+    accommodationSegments: (b.accommodation_segments ?? []).length > 0
+      ? (b.accommodation_segments ?? []).map((s) => ({
+          start_date: s.start_date,
+          end_date: s.end_date,
+          kind: s.kind,
+          villa_id: s.villa?.id ?? null,
+          hotel_id: s.hotel?.id ?? null,
+          notes: s.notes ?? "",
+        }))
+      : b.villa
+        ? [
+            {
+              start_date: days[0]?.date ?? "",
+              end_date: days[days.length - 1]?.date ?? "",
+              kind: "villa" as const,
+              villa_id: b.villa.id,
+              hotel_id: null,
+              notes: "",
+            },
+          ]
+        : [],
     title: b.title ?? "",
     pickupLocation: b.pickup_location ?? "",
     dropoffLocation: b.dropoff_location ?? "",
     tripDescription: b.trip_description ?? "",
+    // Editing an existing booking never lets the operator add MORE
+    // vehicles inline — that's what the group detail screen's
+    // "+ Add booking" does. Keep this empty; the edit form only knows
+    // about the single booking being edited.
+    additionalVehicles: [],
+    proposalTitle: "",
   };
 }
 
@@ -154,17 +272,28 @@ export default function NewBookingScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
-  // The "New" tab may pass { vehicleId }; the "BookingEdit" stack route
-  // passes { bookingId }. Read params loosely since the screen serves both.
+  // The "NewBooking" stack route may pass { vehicleId, dates }; the
+  // "BookingEdit" stack route passes { bookingId }. Read params loosely
+  // since the screen serves both.
   const params = route.params as
-    | { vehicleId?: number; bookingId?: number; dates?: string[] }
+    | {
+        vehicleId?: number;
+        bookingId?: number;
+        dates?: string[];
+        preselectAccommodation?: { kind: "villa" | "hotel"; id: number };
+      }
     | undefined;
   const editingId = params?.bookingId;
   const isEdit = editingId != null;
 
   const optionsQuery = useBookingFormOptions();
+  // Bundle pickers — fetch live so the operator always sees what's currently
+  // active on the marketing site. All three feeds are independent and cheap.
+  const villasQuery = useVillas({ is_active: true });
+  const hotelsQuery = useHotels({ is_active: true });
   const bookingQuery = useAdminBooking(editingId);
   const createBookingMutation = useCreateBooking();
+  const createBookingGroupMutation = useCreateBookingGroup();
   const updateBookingMutation = useUpdateBooking(editingId);
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -236,6 +365,35 @@ export default function NewBookingScreen() {
     });
     vehiclePreselectedRef.current = true;
   }, [isEdit, params?.vehicleId, params?.dates, vehicles]);
+
+  // Create mode: pre-select an accommodation when opened from a Villa or
+  // Hotel detail via navigation.navigate('NewBooking', {
+  // preselectAccommodation: { kind, id } }). Sets no-chauffeur mode by
+  // default so the operator can just add dates + price and save.
+  const accommodationPreselectedRef = useRef(false);
+  useEffect(() => {
+    if (isEdit || accommodationPreselectedRef.current) return;
+    const pre = params?.preselectAccommodation;
+    if (!pre) return;
+    setForm((f) => ({
+      ...f,
+      noVehicle: true,
+      vehicleId: null,
+      driverId: null,
+      dayDetails: {},
+      accommodationSegments: [
+        {
+          start_date: "",
+          end_date: "",
+          kind: pre.kind,
+          villa_id: pre.kind === "villa" ? pre.id : null,
+          hotel_id: pre.kind === "hotel" ? pre.id : null,
+          notes: "",
+        },
+      ],
+    }));
+    accommodationPreselectedRef.current = true;
+  }, [isEdit, params?.preselectAccommodation]);
 
   // Query unavailable dates for the currently selected vehicle so we can
   // grey them out on the calendar.
@@ -340,6 +498,8 @@ export default function NewBookingScreen() {
       }
       return {
         ...f,
+        // Picking a real vehicle flips out of accommodation-only mode.
+        noVehicle: false,
         vehicleId: v.id,
         // Pre-fill the vehicle's default driver (if any). Operator can change
         // it or clear it to "No driver" in the picker.
@@ -409,6 +569,32 @@ export default function NewBookingScreen() {
     }));
   }
 
+  // ---- Additional-vehicle helpers (multi-vehicle proposal mode) --------
+  function addAnotherVehicle() {
+    setForm((f) => ({
+      ...f,
+      additionalVehicles: [...f.additionalVehicles, newAdditionalVehicle()],
+    }));
+  }
+
+  function updateAdditionalVehicle(
+    index: number,
+    patch: Partial<AdditionalVehicleDraft>
+  ) {
+    setForm((f) => {
+      const next = [...f.additionalVehicles];
+      next[index] = { ...next[index], ...patch };
+      return { ...f, additionalVehicles: next };
+    });
+  }
+
+  function removeAdditionalVehicle(index: number) {
+    setForm((f) => ({
+      ...f,
+      additionalVehicles: f.additionalVehicles.filter((_, i) => i !== index),
+    }));
+  }
+
   // Copy the first selected day's schedule onto every other day — handy when
   // a multi-day booking runs the same hours each day.
   function copyFirstDayToAll() {
@@ -423,13 +609,35 @@ export default function NewBookingScreen() {
   }
 
   function validate(): string | null {
-    if (form.vehicleId == null) return "Pick a vehicle.";
+    if (!form.noVehicle && form.vehicleId == null) return "Pick a vehicle.";
     if (form.selectedDates.length === 0) return "Select at least one date.";
-    // Driver is optional — a booking can be created unassigned and a driver
-    // attached later.
     if (!form.customerName.trim()) return "Customer name is required.";
-    // Start + end time are required on every day so time-window conflict
-    // detection is meaningful.
+
+    if (form.noVehicle) {
+      // Accommodation-only: at least one stay + a total price.
+      if (form.accommodationSegments.length === 0) {
+        return "Add at least one accommodation stay.";
+      }
+      for (const seg of form.accommodationSegments) {
+        if (seg.kind === "villa" && seg.villa_id == null) {
+          return "Pick a villa for every stay, or switch it to Hotel.";
+        }
+        if (seg.kind === "hotel" && seg.hotel_id == null) {
+          return "Pick a hotel for every stay, or switch it to Villa.";
+        }
+      }
+      const total = parseFloat(form.customTotalClientAmount);
+      if (
+        !form.customTotalClientAmount.trim() ||
+        isNaN(total) ||
+        total <= 0
+      ) {
+        return "Enter the total client price.";
+      }
+      return null;
+    }
+
+    // Vehicle booking: per-day rates + times required.
     for (const date of form.selectedDates) {
       const detail = form.dayDetails[date];
       if (!detail || !timeForApi(detail.startTime)) {
@@ -445,6 +653,38 @@ export default function NewBookingScreen() {
         return `Enter a valid driver rate for ${prettyDate(date)}.`;
       }
     }
+
+    // Multi-vehicle: each additional entry must have a vehicle + valid
+    // per-day rates. Editing existing bookings can't be multi-vehicle
+    // (guarded at UI-render level, but re-check here too).
+    if (form.additionalVehicles.length > 0) {
+      if (isEdit) {
+        return "Add more vehicles from the group screen, not the edit form.";
+      }
+      for (let i = 0; i < form.additionalVehicles.length; i++) {
+        const av = form.additionalVehicles[i];
+        const label = `vehicle ${i + 2}`;
+        if (av.vehicleId == null) {
+          return `Pick a vehicle for ${label}.`;
+        }
+        if (av.vehicleId === form.vehicleId) {
+          return `${label} is the same as vehicle 1 — pick a different vehicle.`;
+        }
+        for (let j = 0; j < i; j++) {
+          if (form.additionalVehicles[j].vehicleId === av.vehicleId) {
+            return `${label} duplicates vehicle ${j + 2} — pick a different one.`;
+          }
+        }
+        const clientRate = parseFloat(av.clientRatePerDay);
+        const driverRate = parseFloat(av.driverRatePerDay);
+        if (isNaN(clientRate) || clientRate <= 0) {
+          return `Enter a client rate for ${label}.`;
+        }
+        if (isNaN(driverRate) || driverRate < 0) {
+          return `Enter a driver rate for ${label}.`;
+        }
+      }
+    }
     return null;
   }
 
@@ -457,22 +697,28 @@ export default function NewBookingScreen() {
       );
       return;
     }
-    const days: CreateBookingDayPayload[] = form.selectedDates.map((date) => {
-      const detail = form.dayDetails[date] ?? newDayDetail();
-      return {
-        date,
-        day_type: form.dayType,
-        start_time: timeForApi(detail.startTime),
-        end_time: timeForApi(detail.endTime),
-        notes: detail.notes.trim() || null,
-        client_rate: parseFloat(detail.clientRate).toFixed(2),
-        driver_rate: parseFloat(detail.driverRate).toFixed(2),
-        driver_payment_status: "unpaid",
-      };
-    });
+    // Days array carries per-day vehicle rates. For accommodation-only
+    // bookings there are no rates and no chauffeur schedule — send an
+    // empty array so the booking still has the date range attached
+    // (backend can derive start/end from it).
+    const days: CreateBookingDayPayload[] = form.noVehicle
+      ? []
+      : form.selectedDates.map((date) => {
+          const detail = form.dayDetails[date] ?? newDayDetail();
+          return {
+            date,
+            day_type: form.dayType,
+            start_time: timeForApi(detail.startTime),
+            end_time: timeForApi(detail.endTime),
+            notes: detail.notes.trim() || null,
+            client_rate: parseFloat(detail.clientRate).toFixed(2),
+            driver_rate: parseFloat(detail.driverRate).toFixed(2),
+            driver_payment_status: "unpaid",
+          };
+        });
 
     const payload: CreateBookingPayload = {
-      car: form.vehicleId!,
+      car: form.noVehicle ? null : form.vehicleId!,
       title: form.title.trim() || form.customerName.trim(),
       customer_name: form.customerName.trim(),
       customer_email: form.customerEmail.trim(),
@@ -482,12 +728,122 @@ export default function NewBookingScreen() {
       trip_description: form.tripDescription.trim(),
       status: "pending",
       days,
-      // Send driver only when explicitly overridden. Otherwise let the
-      // backend use the vehicle's default driver.
       // Always send driver explicitly — null means "no driver assigned",
       // which the backend accepts (driver is a nullable FK).
       driver: form.driverId,
+      // Proposal bundle add-ons. Send empty arrays / null explicitly so
+      // editing a booking can clear previously-set ones.
+      // `villa_id` is a legacy-compat fallback derived from the first
+      // villa segment — remove once the backend fully uses segments.
+      villa_id:
+        form.accommodationSegments.find(
+          (s) => s.kind === "villa" && s.villa_id != null
+        )?.villa_id ?? null,
+      accommodation_segments: form.accommodationSegments.map((s) => ({
+        start_date: s.start_date,
+        end_date: s.end_date,
+        kind: s.kind,
+        villa_id: s.kind === "villa" ? s.villa_id : null,
+        hotel_id: s.kind === "hotel" ? s.hotel_id : null,
+        notes: s.notes.trim(),
+      })),
+      // Only sent for accommodation-only bookings; the backend ignores
+      // this when a vehicle is set (rates on days drive the total there).
+      ...(form.noVehicle
+        ? {
+            custom_total_client_amount: parseFloat(
+              form.customTotalClientAmount
+            ).toFixed(2),
+          }
+        : {}),
     };
+
+    // Multi-vehicle branch: POST /api/admin/booking-groups/create/ with the
+    // primary booking as bookings[0] and each additional vehicle expanded
+    // into per-day rate rows using the primary vehicle's dates. The
+    // additional-vehicle UI is intentionally simple (one flat rate per
+    // vehicle, same date range as primary) — 95% of multi-vehicle
+    // proposals are two cars doing the same tour together.
+    if (!isEdit && form.additionalVehicles.length > 0) {
+      // We already validated above that noVehicle=false and dates exist.
+      const primaryChild: CreateBookingGroupChildPayload = {
+        car: form.vehicleId!,
+        driver: form.driverId,
+        title: form.title.trim() || undefined,
+        pickup_location: form.pickupLocation.trim(),
+        dropoff_location: form.dropoffLocation.trim(),
+        trip_description: form.tripDescription.trim(),
+        days,
+        villa_id: payload.villa_id,
+        accommodation_segments: payload.accommodation_segments,
+      };
+
+      const additionalChildren: CreateBookingGroupChildPayload[] =
+        form.additionalVehicles.map((av) => ({
+          car: av.vehicleId!,
+          driver: av.driverId,
+          pickup_location:
+            av.pickupLocation.trim() || form.pickupLocation.trim(),
+          dropoff_location:
+            av.dropoffLocation.trim() || form.dropoffLocation.trim(),
+          trip_description:
+            av.tripDescription.trim() || form.tripDescription.trim(),
+          // Expand the primary's dates into per-day rows for this vehicle.
+          // Times mirror the primary's (matches the "two cars same tour"
+          // pattern); operator can tweak from the child booking's detail
+          // screen after the group is created.
+          days: form.selectedDates.map((date) => {
+            const primaryDetail = form.dayDetails[date] ?? newDayDetail();
+            return {
+              date,
+              day_type: form.dayType,
+              start_time: timeForApi(primaryDetail.startTime),
+              end_time: timeForApi(primaryDetail.endTime),
+              notes: null,
+              client_rate: parseFloat(av.clientRatePerDay).toFixed(2),
+              driver_rate: parseFloat(av.driverRatePerDay).toFixed(2),
+              driver_payment_status: "unpaid",
+            };
+          }),
+        }));
+
+      const groupPayload: CreateBookingGroupPayload = {
+        title:
+          form.proposalTitle.trim() ||
+          `${1 + form.additionalVehicles.length}-vehicle proposal for ${form.customerName.trim()}`,
+        customer_name: form.customerName.trim(),
+        customer_email: form.customerEmail.trim(),
+        customer_phone: form.customerPhone.trim(),
+        status: "pending",
+        bookings: [primaryChild, ...additionalChildren],
+      };
+
+      try {
+        const group =
+          await createBookingGroupMutation.mutateAsync(groupPayload);
+        Alert.alert(
+          "Proposal created",
+          `${group.group_reference} — ${group.bookings.length} vehicles bundled.`,
+          [
+            {
+              text: "View",
+              onPress: () =>
+                navigation.replace("BookingGroupDetail", {
+                  groupId: group.id,
+                }),
+            },
+            {
+              text: "New booking",
+              style: "cancel",
+              onPress: () => setForm(EMPTY_FORM),
+            },
+          ]
+        );
+      } catch (err: unknown) {
+        Alert.alert("Couldn't create proposal", formatApiError(err));
+      }
+      return;
+    }
 
     try {
       if (isEdit) {
@@ -566,10 +922,29 @@ export default function NewBookingScreen() {
                 style={styles.vehicleButton}
                 contentStyle={styles.vehicleButtonContent}
               >
-                {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
+                {form.noVehicle
+                  ? "No chauffeur — accommodation only"
+                  : selectedVehicle
+                    ? selectedVehicle.title
+                    : "Choose a vehicle"}
               </Button>
             }
           >
+            <Menu.Item
+              onPress={() => {
+                setVehicleMenuOpen(false);
+                setForm((f) => ({
+                  ...f,
+                  noVehicle: true,
+                  vehicleId: null,
+                  driverId: null,
+                  // Clear per-day rates — they don't apply without a vehicle.
+                  dayDetails: {},
+                }));
+              }}
+              title="No chauffeur — accommodation only"
+              leadingIcon={form.noVehicle ? "check" : undefined}
+            />
             {vehicles
               .filter((v) => v.is_active)
               .map((v) => (
@@ -577,10 +952,15 @@ export default function NewBookingScreen() {
                   key={v.id}
                   onPress={() => pickVehicle(v)}
                   title={`${v.title}${v.registration_number ? `  ·  ${v.registration_number}` : ""}`}
+                  leadingIcon={
+                    !form.noVehicle && form.vehicleId === v.id
+                      ? "check"
+                      : undefined
+                  }
                 />
               ))}
           </Menu>
-          {selectedVehicle ? (
+          {selectedVehicle && !form.noVehicle ? (
             <View style={styles.vehicleMeta}>
               <Text style={styles.metaLabel}>Driver</Text>
               <Menu
@@ -633,11 +1013,13 @@ export default function NewBookingScreen() {
             ) : null
           }
         >
-          {selectedVehicle ? (
+          {selectedVehicle || form.noVehicle ? (
             <>
               <View style={styles.calendarShell}>
                 <Calendar
-                  markedDates={markedDates}
+                  // No vehicle → no availability marks, but the operator
+                  // still needs to pick the accommodation date range.
+                  markedDates={form.noVehicle ? {} : markedDates}
                   markingType="custom"
                   onDayPress={toggleDate}
                   theme={calendarTheme}
@@ -645,7 +1027,7 @@ export default function NewBookingScreen() {
                   minDate={new Date().toISOString().slice(0, 10)}
                 />
               </View>
-              {unavailableQuery.isLoading ? (
+              {!form.noVehicle && unavailableQuery.isLoading ? (
                 <HelperText type="info" style={styles.helper}>
                   Loading vehicle availability…
                 </HelperText>
@@ -670,19 +1052,22 @@ export default function NewBookingScreen() {
                 </View>
               ) : (
                 <HelperText type="info" style={styles.helper}>
-                  Tap dates to add them. Greyed dates are already booked.
+                  {form.noVehicle
+                    ? "Tap the nights the client is staying."
+                    : "Tap dates to add them. Greyed dates are already booked."}
                 </HelperText>
               )}
             </>
           ) : (
             <Text style={styles.muted}>
-              Pick a vehicle first to see availability.
+              Pick a vehicle first, or choose "No chauffeur — accommodation
+              only" above.
             </Text>
           )}
         </Section>
 
-        {/* ---- Per-day schedule ---- */}
-        {form.selectedDates.length > 0 ? (
+        {/* ---- Per-day schedule (vehicle bookings only) ---- */}
+        {form.selectedDates.length > 0 && !form.noVehicle ? (
           <Section
             title="Daily schedule"
             right={
@@ -892,23 +1277,594 @@ export default function NewBookingScreen() {
           />
         </Section>
 
+        {/* ---- Additional vehicles (multi-vehicle proposal) ---- */}
+        {!isEdit && !form.noVehicle ? (
+          <Section
+            title={
+              form.additionalVehicles.length === 0
+                ? "Additional vehicles (optional)"
+                : `Additional vehicles (${form.additionalVehicles.length})`
+            }
+            right={
+              form.additionalVehicles.length > 0 ? (
+                <Button
+                  compact
+                  onPress={addAnotherVehicle}
+                  icon="plus"
+                  textColor={colors.primary}
+                >
+                  Add
+                </Button>
+              ) : null
+            }
+          >
+            <Text style={styles.helper}>
+              Bundle this booking with more vehicles into ONE client-facing
+              proposal — one URL, one combined total, one Yoco payment link.
+              All added vehicles use the primary vehicle's dates.
+            </Text>
+
+            {form.additionalVehicles.length === 0 ? (
+              <Button
+                mode="outlined"
+                onPress={addAnotherVehicle}
+                icon="plus"
+                style={[styles.bundlePickerButton, { marginTop: 12 }]}
+                contentStyle={styles.bundlePickerButtonContent}
+                textColor={colors.primary}
+                disabled={form.selectedDates.length === 0}
+              >
+                {form.selectedDates.length === 0
+                  ? "Pick primary dates first"
+                  : "+ Add another vehicle"}
+              </Button>
+            ) : (
+              <>
+                <TextInput
+                  label="Proposal title (optional)"
+                  value={form.proposalTitle}
+                  onChangeText={(v) =>
+                    setForm((f) => ({ ...f, proposalTitle: v }))
+                  }
+                  mode="outlined"
+                  style={[styles.input, { marginTop: 10 }]}
+                  placeholder="e.g. Cape Town family tour — 5 nights, 2 vehicles"
+                />
+                {form.additionalVehicles.map((av, i) => (
+                  <AdditionalVehicleCard
+                    key={i}
+                    index={i}
+                    entry={av}
+                    vehicles={vehicles}
+                    drivers={drivers}
+                    excludedVehicleIds={[
+                      form.vehicleId,
+                      ...form.additionalVehicles
+                        .map((x, j) => (j !== i ? x.vehicleId : null)),
+                    ].filter((id): id is number => id != null)}
+                    dayCount={form.selectedDates.length}
+                    onChange={(patch) => updateAdditionalVehicle(i, patch)}
+                    onRemove={() => removeAdditionalVehicle(i)}
+                  />
+                ))}
+              </>
+            )}
+          </Section>
+        ) : null}
+
+        {/* ---- Accommodation (optional) ---- */}
+        <Section title="Accommodation (optional)">
+          <Text style={styles.helper}>
+            Attach one or more villa / hotel stays over the booking's
+            date range. The client sees them on the confirmation page
+            alongside the vehicle booking.
+          </Text>
+
+          <View style={styles.segmentsHeader}>
+            <Text style={styles.miniLabel}>Stays</Text>
+            <Button
+              compact
+              onPress={() =>
+                setForm((f) => {
+                  // Default new segment to the first free/last-used date range
+                  // in the booking so the operator isn't typing dates.
+                  const firstDate = f.selectedDates[0] ?? "";
+                  const lastDate =
+                    f.selectedDates[f.selectedDates.length - 1] ?? firstDate;
+                  return {
+                    ...f,
+                    accommodationSegments: [
+                      ...f.accommodationSegments,
+                      newSegment(firstDate, lastDate),
+                    ],
+                  };
+                })
+              }
+              icon="plus"
+              textColor={colors.primary}
+            >
+              Add stay
+            </Button>
+          </View>
+
+          {form.accommodationSegments.length === 0 ? (
+            <Text style={styles.helper}>
+              No accommodation attached. Tap "Add stay" to add a villa or
+              hotel — you can add multiple to cover different dates.
+            </Text>
+          ) : (
+            form.accommodationSegments.map((seg, i) => (
+              <SegmentCard
+                key={i}
+                index={i}
+                segment={seg}
+                availableDates={form.selectedDates}
+                villas={villasQuery.data ?? []}
+                hotels={hotelsQuery.data ?? []}
+                onChange={(patch) =>
+                  setForm((f) => {
+                    const next = [...f.accommodationSegments];
+                    next[i] = { ...next[i], ...patch };
+                    return { ...f, accommodationSegments: next };
+                  })
+                }
+                onRemove={() =>
+                  setForm((f) => ({
+                    ...f,
+                    accommodationSegments: f.accommodationSegments.filter(
+                      (_, j) => j !== i
+                    ),
+                  }))
+                }
+              />
+            ))
+          )}
+
+        </Section>
+
+        {/* ---- Price (accommodation-only bookings) ---- */}
+        {form.noVehicle ? (
+          <Section title="Price">
+            <Text style={styles.helper}>
+              Enter the total the client should be charged for this stay.
+              No per-day rates are needed without a chauffeur.
+            </Text>
+            <TextInput
+              label="Total client amount (R)"
+              value={form.customTotalClientAmount}
+              onChangeText={(v) =>
+                setForm((f) => ({ ...f, customTotalClientAmount: v }))
+              }
+              mode="outlined"
+              keyboardType="decimal-pad"
+              style={[styles.input, { marginTop: 10 }]}
+            />
+          </Section>
+        ) : null}
+
         <Button
           mode="contained"
           onPress={handleSubmit}
           loading={
-            createBookingMutation.isPending || updateBookingMutation.isPending
+            createBookingMutation.isPending ||
+            createBookingGroupMutation.isPending ||
+            updateBookingMutation.isPending
           }
           disabled={
-            createBookingMutation.isPending || updateBookingMutation.isPending
+            createBookingMutation.isPending ||
+            createBookingGroupMutation.isPending ||
+            updateBookingMutation.isPending
           }
           style={styles.submit}
           contentStyle={styles.submitContent}
           labelStyle={styles.submitLabel}
         >
-          {isEdit ? "Save changes" : "Create booking"}
+          {isEdit
+            ? "Save changes"
+            : form.additionalVehicles.length > 0
+              ? `Create ${1 + form.additionalVehicles.length}-vehicle proposal`
+              : "Create booking"}
         </Button>
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+// Compact card for a secondary vehicle on a multi-vehicle proposal.
+// Deliberately lightweight vs. the primary vehicle section — it inherits
+// the primary's dates, uses a single R/day rate (rather than per-day
+// editing), and defaults pickup/dropoff/description to the primary's if
+// left blank. This matches the common case (2 cars, same tour) without
+// overwhelming the operator on the first form.
+function AdditionalVehicleCard({
+  index,
+  entry,
+  vehicles,
+  drivers,
+  excludedVehicleIds,
+  dayCount,
+  onChange,
+  onRemove,
+}: {
+  index: number;
+  entry: AdditionalVehicleDraft;
+  vehicles: Vehicle[];
+  drivers: DriverNested[];
+  excludedVehicleIds: number[];
+  dayCount: number;
+  onChange: (patch: Partial<AdditionalVehicleDraft>) => void;
+  onRemove: () => void;
+}) {
+  const [vehicleMenuOpen, setVehicleMenuOpen] = useState(false);
+  const [driverMenuOpen, setDriverMenuOpen] = useState(false);
+
+  const selectedVehicle = vehicles.find((v) => v.id === entry.vehicleId);
+  const selectedDriver = drivers.find((d) => d.id === entry.driverId);
+  const excluded = new Set(excludedVehicleIds);
+  const clientRate = parseFloat(entry.clientRatePerDay || "0");
+  const totalClient = isNaN(clientRate) ? 0 : clientRate * dayCount;
+
+  return (
+    <View style={styles.segmentCard}>
+      <View style={styles.segmentHeader}>
+        <Text style={styles.segmentTitle}>Vehicle {index + 2}</Text>
+        <Button compact onPress={onRemove} textColor={colors.muted}>
+          Remove
+        </Button>
+      </View>
+
+      {/* Vehicle picker — excludes vehicles already used on the proposal. */}
+      <Menu
+        visible={vehicleMenuOpen}
+        onDismiss={() => setVehicleMenuOpen(false)}
+        anchor={
+          <Button
+            mode="outlined"
+            onPress={() => setVehicleMenuOpen(true)}
+            style={styles.bundlePickerButton}
+            contentStyle={styles.bundlePickerButtonContent}
+            textColor={selectedVehicle ? colors.heading : colors.muted}
+          >
+            {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
+          </Button>
+        }
+      >
+        {vehicles
+          .filter((v) => v.is_active && !excluded.has(v.id))
+          .map((v) => (
+            <Menu.Item
+              key={v.id}
+              onPress={() => {
+                onChange({
+                  vehicleId: v.id,
+                  driverId: v.driver?.id ?? entry.driverId,
+                  clientRatePerDay: entry.clientRatePerDay || v.price || "",
+                  driverRatePerDay:
+                    entry.driverRatePerDay ||
+                    v.driver?.default_daily_rate ||
+                    "",
+                });
+                setVehicleMenuOpen(false);
+              }}
+              title={v.title}
+              leadingIcon={entry.vehicleId === v.id ? "check" : undefined}
+            />
+          ))}
+      </Menu>
+
+      {/* Driver picker */}
+      <Menu
+        visible={driverMenuOpen}
+        onDismiss={() => setDriverMenuOpen(false)}
+        anchor={
+          <Button
+            mode="outlined"
+            onPress={() => setDriverMenuOpen(true)}
+            style={[styles.bundlePickerButton, { marginTop: 8 }]}
+            contentStyle={styles.bundlePickerButtonContent}
+            textColor={selectedDriver ? colors.heading : colors.muted}
+          >
+            {selectedDriver ? selectedDriver.full_name : "No driver assigned"}
+          </Button>
+        }
+      >
+        <Menu.Item
+          onPress={() => {
+            onChange({ driverId: null });
+            setDriverMenuOpen(false);
+          }}
+          title="No driver assigned"
+          leadingIcon={entry.driverId == null ? "check" : undefined}
+        />
+        {drivers.map((d) => (
+          <Menu.Item
+            key={d.id}
+            onPress={() => {
+              onChange({ driverId: d.id });
+              setDriverMenuOpen(false);
+            }}
+            title={d.full_name}
+            leadingIcon={entry.driverId === d.id ? "check" : undefined}
+          />
+        ))}
+      </Menu>
+
+      <View style={[styles.row, { marginTop: 10 }]}>
+        <TextInput
+          label="Client rate (R / day)"
+          value={entry.clientRatePerDay}
+          onChangeText={(v) => onChange({ clientRatePerDay: v })}
+          mode="outlined"
+          keyboardType="decimal-pad"
+          style={[styles.input, styles.half]}
+        />
+        <TextInput
+          label="Driver rate (R / day)"
+          value={entry.driverRatePerDay}
+          onChangeText={(v) => onChange({ driverRatePerDay: v })}
+          mode="outlined"
+          keyboardType="decimal-pad"
+          style={[styles.input, styles.half]}
+        />
+      </View>
+
+      {totalClient > 0 && dayCount > 0 ? (
+        <Text style={styles.helper}>
+          × {dayCount} {dayCount === 1 ? "day" : "days"} = R{" "}
+          {totalClient.toFixed(2)}
+        </Text>
+      ) : null}
+
+      <TextInput
+        label="Pickup location (optional)"
+        value={entry.pickupLocation}
+        onChangeText={(v) => onChange({ pickupLocation: v })}
+        mode="outlined"
+        style={[styles.input, { marginTop: 8 }]}
+        placeholder="Falls back to primary vehicle's pickup"
+      />
+      <TextInput
+        label="Dropoff location (optional)"
+        value={entry.dropoffLocation}
+        onChangeText={(v) => onChange({ dropoffLocation: v })}
+        mode="outlined"
+        style={styles.input}
+        placeholder="Falls back to primary vehicle's dropoff"
+      />
+      <TextInput
+        label="Description for this vehicle (optional)"
+        value={entry.tripDescription}
+        onChangeText={(v) => onChange({ tripDescription: v })}
+        mode="outlined"
+        multiline
+        numberOfLines={2}
+        style={styles.input}
+        placeholder="e.g. Second car for luggage / larger group"
+      />
+    </View>
+  );
+}
+
+// Single-select picker rendered as a dropdown menu. Used for the villa
+// slot — null means "no villa".
+// Per-segment card: kind toggle (villa/hotel), start/end date pickers
+// (constrained to the dates the operator already picked on the booking
+// calendar), villa or hotel picker, and a notes field. All operator-set —
+// the client sees the resolved data on the confirmation page.
+function SegmentCard({
+  index,
+  segment,
+  availableDates,
+  villas,
+  hotels,
+  onChange,
+  onRemove,
+}: {
+  index: number;
+  segment: SegmentDraft;
+  availableDates: string[];
+  villas: { id: number; name: string }[];
+  hotels: { id: number; name: string }[];
+  onChange: (patch: Partial<SegmentDraft>) => void;
+  onRemove: () => void;
+}) {
+  const [startOpen, setStartOpen] = useState(false);
+  const [endOpen, setEndOpen] = useState(false);
+  const [placeOpen, setPlaceOpen] = useState(false);
+
+  // End options are dates >= start_date (falls back to all if no start yet).
+  const endOptions = segment.start_date
+    ? availableDates.filter((d) => d >= segment.start_date)
+    : availableDates;
+
+  const selectedName =
+    segment.kind === "villa"
+      ? villas.find((v) => v.id === segment.villa_id)?.name
+      : hotels.find((h) => h.id === segment.hotel_id)?.name;
+  const placeholder =
+    segment.kind === "villa"
+      ? "Pick a villa"
+      : "Pick a hotel";
+  const placeOptions = segment.kind === "villa" ? villas : hotels;
+  const selectedPlaceId =
+    segment.kind === "villa" ? segment.villa_id : segment.hotel_id;
+
+  return (
+    <View style={styles.segmentCard}>
+      <View style={styles.segmentHeader}>
+        <Text style={styles.segmentTitle}>Stay {index + 1}</Text>
+        <Button compact onPress={onRemove} textColor={colors.muted}>
+          Remove
+        </Button>
+      </View>
+
+      {/* Kind toggle */}
+      <View style={styles.kindToggle}>
+        {(["villa", "hotel"] as const).map((k) => {
+          const active = segment.kind === k;
+          return (
+            <TouchableOpacity
+              key={k}
+              onPress={() =>
+                onChange({
+                  kind: k,
+                  // Clear the OTHER side so we don't accidentally send both.
+                  villa_id: k === "villa" ? segment.villa_id : null,
+                  hotel_id: k === "hotel" ? segment.hotel_id : null,
+                })
+              }
+              activeOpacity={0.85}
+              style={[
+                styles.kindToggleBtn,
+                active && styles.kindToggleBtnActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.kindToggleText,
+                  active && styles.kindToggleTextActive,
+                ]}
+              >
+                {k === "villa" ? "Villa" : "Hotel"}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Date pickers — constrained to booking's selectedDates. */}
+      <View style={styles.row}>
+        <Menu
+          visible={startOpen}
+          onDismiss={() => setStartOpen(false)}
+          anchor={
+            <View style={[styles.half]}>
+              <Button
+                mode="outlined"
+                onPress={() => setStartOpen(true)}
+                style={styles.bundlePickerButton}
+                contentStyle={styles.bundlePickerButtonContent}
+                textColor={
+                  segment.start_date ? colors.heading : colors.muted
+                }
+              >
+                {segment.start_date
+                  ? `From ${prettyDate(segment.start_date)}`
+                  : "From…"}
+              </Button>
+            </View>
+          }
+        >
+          {availableDates.length === 0 ? (
+            <Menu.Item title="Pick booking dates first" disabled />
+          ) : (
+            availableDates.map((d) => (
+              <Menu.Item
+                key={d}
+                onPress={() => {
+                  // If a start > current end, push end forward.
+                  const newEnd =
+                    segment.end_date && d > segment.end_date ? d : segment.end_date;
+                  onChange({ start_date: d, end_date: newEnd });
+                  setStartOpen(false);
+                }}
+                title={prettyDate(d)}
+                leadingIcon={segment.start_date === d ? "check" : undefined}
+              />
+            ))
+          )}
+        </Menu>
+
+        <Menu
+          visible={endOpen}
+          onDismiss={() => setEndOpen(false)}
+          anchor={
+            <View style={[styles.half]}>
+              <Button
+                mode="outlined"
+                onPress={() => setEndOpen(true)}
+                style={styles.bundlePickerButton}
+                contentStyle={styles.bundlePickerButtonContent}
+                textColor={
+                  segment.end_date ? colors.heading : colors.muted
+                }
+              >
+                {segment.end_date
+                  ? `To ${prettyDate(segment.end_date)}`
+                  : "To…"}
+              </Button>
+            </View>
+          }
+        >
+          {endOptions.length === 0 ? (
+            <Menu.Item title="Pick a start date first" disabled />
+          ) : (
+            endOptions.map((d) => (
+              <Menu.Item
+                key={d}
+                onPress={() => {
+                  onChange({ end_date: d });
+                  setEndOpen(false);
+                }}
+                title={prettyDate(d)}
+                leadingIcon={segment.end_date === d ? "check" : undefined}
+              />
+            ))
+          )}
+        </Menu>
+      </View>
+
+      {/* Villa / Hotel picker */}
+      <Menu
+        visible={placeOpen}
+        onDismiss={() => setPlaceOpen(false)}
+        anchor={
+          <Button
+            mode="outlined"
+            onPress={() => setPlaceOpen(true)}
+            style={[styles.bundlePickerButton, { marginTop: 8 }]}
+            contentStyle={styles.bundlePickerButtonContent}
+            textColor={selectedPlaceId == null ? colors.muted : colors.heading}
+          >
+            {selectedName ?? placeholder}
+          </Button>
+        }
+      >
+        {placeOptions.length === 0 ? (
+          <Menu.Item
+            title={`No ${segment.kind}s available`}
+            disabled
+          />
+        ) : (
+          placeOptions.map((o) => (
+            <Menu.Item
+              key={o.id}
+              onPress={() => {
+                if (segment.kind === "villa") {
+                  onChange({ villa_id: o.id });
+                } else {
+                  onChange({ hotel_id: o.id });
+                }
+                setPlaceOpen(false);
+              }}
+              title={o.name}
+              leadingIcon={selectedPlaceId === o.id ? "check" : undefined}
+            />
+          ))
+        )}
+      </Menu>
+
+      <TextInput
+        label="Notes (optional)"
+        value={segment.notes}
+        onChangeText={(v) => onChange({ notes: v })}
+        mode="outlined"
+        multiline
+        numberOfLines={2}
+        style={[styles.input, { marginTop: 10 }]}
+        placeholder="e.g. Upgrade to sea-view suite, request early check-in"
+      />
+    </View>
   );
 }
 
@@ -1066,4 +2022,104 @@ const styles = StyleSheet.create({
   submit: { borderRadius: 14, marginTop: 8 },
   submitContent: { height: 52 },
   submitLabel: { fontSize: 16, fontWeight: "700", letterSpacing: 0.3 },
+
+  // Bundle pickers (villa / experiences / packages).
+  miniLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    marginBottom: 6,
+  },
+  bundlePickerButton: {
+    borderRadius: 12,
+    borderColor: colors.border,
+  },
+  bundlePickerButtonContent: { height: 48, justifyContent: "flex-start" },
+  multiPickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    marginBottom: 8,
+  },
+  multiPickerRowSelected: {
+    borderColor: colors.primary,
+    backgroundColor: "rgba(11,91,51,0.06)",
+  },
+  multiPickerLabel: {
+    color: colors.heading,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  multiPickerSublabel: {
+    color: colors.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  multiPickerCheck: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 12,
+  },
+  multiPickerCheckActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  multiPickerCheckMark: { color: "#fff", fontWeight: "800", fontSize: 14 },
+
+  // Accommodation segments builder.
+  segmentsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  segmentCard: {
+    marginBottom: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+  },
+  segmentHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  segmentTitle: { color: colors.heading, fontSize: 14, fontWeight: "800" },
+  kindToggle: {
+    flexDirection: "row",
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 999,
+    padding: 3,
+    gap: 3,
+    marginBottom: 10,
+  },
+  kindToggleBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 999,
+    alignItems: "center",
+  },
+  kindToggleBtnActive: { backgroundColor: colors.surface },
+  kindToggleText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  kindToggleTextActive: { color: colors.heading },
 });

@@ -458,6 +458,9 @@ function PhotoManager({ vehicle }: { vehicle: Vehicle }) {
   const updatePhotoMutation = useUpdateVehiclePhoto(vehicle.id);
   const deletePhotoMutation = useDeleteVehiclePhoto(vehicle.id);
 
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
   const photos = useMemo(() => {
     const list = vehicle.cover_photos ?? [];
     return [...list].sort((a, b) => {
@@ -465,6 +468,20 @@ function PhotoManager({ vehicle }: { vehicle: Vehicle }) {
       return (a.order ?? 0) - (b.order ?? 0);
     });
   }, [vehicle.cover_photos]);
+
+  function toggleSelected(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
 
   async function pickAndUpload() {
     // Ask for permission first (iOS especially is strict here).
@@ -481,18 +498,23 @@ function PhotoManager({ vehicle }: { vehicle: Vehicle }) {
       // constant is deprecated.
       mediaTypes: ["images"],
       quality: 0.85,
-      allowsMultipleSelection: false,
+      allowsMultipleSelection: true,
+      selectionLimit: 20,
     });
     if (result.canceled || result.assets.length === 0) return;
-    const asset = result.assets[0];
-    try {
-      await uploadMutation.mutateAsync({
-        fileUri: asset.uri,
-        filename: asset.fileName ?? undefined,
-        mimeType: asset.mimeType ?? undefined,
-      });
-    } catch (e: unknown) {
-      Alert.alert("Couldn't upload", formatApiError(e));
+    // Sequential uploads — surface the first failure clearly instead of a
+    // flurry of parallel errors.
+    for (const asset of result.assets) {
+      try {
+        await uploadMutation.mutateAsync({
+          fileUri: asset.uri,
+          filename: asset.fileName ?? undefined,
+          mimeType: asset.mimeType ?? undefined,
+        });
+      } catch (e: unknown) {
+        Alert.alert("Some photos didn't upload", formatApiError(e));
+        return;
+      }
     }
   }
 
@@ -507,7 +529,7 @@ function PhotoManager({ vehicle }: { vehicle: Vehicle }) {
     }
   }
 
-  async function deletePhoto(photo: VehicleCoverPhoto) {
+  async function deleteOne(photo: VehicleCoverPhoto) {
     Alert.alert("Delete this photo?", "This can't be undone.", [
       { text: "Keep", style: "cancel" },
       {
@@ -524,57 +546,147 @@ function PhotoManager({ vehicle }: { vehicle: Vehicle }) {
     ]);
   }
 
+  async function bulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    Alert.alert(
+      `Delete ${ids.length} photo${ids.length === 1 ? "" : "s"}?`,
+      "This can't be undone.",
+      [
+        { text: "Keep", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            for (const id of ids) {
+              try {
+                await deletePhotoMutation.mutateAsync(id);
+              } catch (e: unknown) {
+                Alert.alert("Couldn't delete all", formatApiError(e));
+                exitSelectMode();
+                return;
+              }
+            }
+            exitSelectMode();
+          },
+        },
+      ]
+    );
+  }
+
   return (
     <Card style={styles.section} mode="elevated">
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Photos</Text>
-        <Button
-          compact
-          onPress={pickAndUpload}
-          loading={uploadMutation.isPending}
-          disabled={uploadMutation.isPending}
-          icon="plus"
-          textColor={colors.primary}
-        >
-          Add
-        </Button>
+        <View style={styles.photoHeaderActions}>
+          {selectMode ? (
+            <Button compact onPress={exitSelectMode} textColor={colors.muted}>
+              Cancel
+            </Button>
+          ) : (
+            <>
+              {photos.length > 0 ? (
+                <Button
+                  compact
+                  onPress={() => setSelectMode(true)}
+                  textColor={colors.muted}
+                >
+                  Select
+                </Button>
+              ) : null}
+              <Button
+                compact
+                onPress={pickAndUpload}
+                loading={uploadMutation.isPending}
+                disabled={uploadMutation.isPending}
+                icon="plus"
+                textColor={colors.primary}
+              >
+                Add
+              </Button>
+            </>
+          )}
+        </View>
       </View>
       <View style={styles.sectionBody}>
         {photos.length === 0 ? (
           <Text style={styles.helper}>
-            No photos yet. Tap Add to upload the first one — it'll become the
-            featured image automatically.
+            No photos yet. Tap Add to upload — you can pick multiple at once.
+            The first uploaded photo becomes the featured image automatically.
           </Text>
         ) : (
           <View style={styles.photoGrid}>
-            {photos.map((p) => (
-              <View key={p.id} style={styles.photoTile}>
-                <ShimmerImage uri={p.cover_photos} style={styles.photoImage} />
-                {p.is_featured ? (
-                  <View style={styles.featuredBadge}>
-                    <Text style={styles.featuredText}>FEATURED</Text>
-                  </View>
-                ) : null}
-                <View style={styles.photoActions}>
-                  {!p.is_featured ? (
-                    <TouchableOpacity
-                      onPress={() => setFeatured(p)}
-                      style={styles.photoActionBtn}
-                    >
-                      <Text style={styles.photoActionText}>★</Text>
-                    </TouchableOpacity>
+            {photos.map((p) => {
+              const isSelected = selectedIds.has(p.id);
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  activeOpacity={selectMode ? 0.7 : 1}
+                  onPress={selectMode ? () => toggleSelected(p.id) : undefined}
+                  style={styles.photoTile}
+                >
+                  <ShimmerImage uri={p.cover_photos} style={styles.photoImage} />
+                  {p.is_featured ? (
+                    <View style={styles.featuredBadge}>
+                      <Text style={styles.featuredText}>FEATURED</Text>
+                    </View>
                   ) : null}
-                  <TouchableOpacity
-                    onPress={() => deletePhoto(p)}
-                    style={[styles.photoActionBtn, styles.photoActionDanger]}
-                  >
-                    <Text style={styles.photoActionText}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
+                  {selectMode ? (
+                    <View
+                      style={[
+                        styles.selectOverlay,
+                        isSelected && styles.selectOverlayActive,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.selectCheck,
+                          isSelected && styles.selectCheckActive,
+                        ]}
+                      >
+                        {isSelected ? (
+                          <Text style={styles.selectCheckMark}>✓</Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.photoActions}>
+                      {!p.is_featured ? (
+                        <TouchableOpacity
+                          onPress={() => setFeatured(p)}
+                          style={styles.photoActionBtn}
+                        >
+                          <Text style={styles.photoActionText}>★</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      <TouchableOpacity
+                        onPress={() => deleteOne(p)}
+                        style={[styles.photoActionBtn, styles.photoActionDanger]}
+                      >
+                        <Text style={styles.photoActionText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
+        {selectMode && selectedIds.size > 0 ? (
+          <Button
+            mode="contained"
+            onPress={bulkDelete}
+            loading={deletePhotoMutation.isPending}
+            disabled={deletePhotoMutation.isPending}
+            buttonColor="#b03b3b"
+            textColor="#fff"
+            icon="trash-can-outline"
+            style={styles.bulkDeleteButton}
+            contentStyle={styles.bulkDeleteContent}
+          >
+            Delete {selectedIds.size} photo{selectedIds.size === 1 ? "" : "s"}
+          </Button>
+        ) : null}
       </View>
     </Card>
   );
@@ -750,4 +862,36 @@ const styles = StyleSheet.create({
   },
   photoActionDanger: { backgroundColor: "rgba(176,59,59,0.85)" },
   photoActionText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+
+  // Multi-select photo overlay + bulk action bar.
+  photoHeaderActions: { flexDirection: "row", alignItems: "center", gap: 2 },
+  selectOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.18)",
+    justifyContent: "flex-end",
+    alignItems: "flex-end",
+    padding: 8,
+  },
+  selectOverlayActive: { backgroundColor: "rgba(11,91,51,0.45)" },
+  selectCheck: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: "#fff",
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectCheckActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  selectCheckMark: { color: "#fff", fontWeight: "800", fontSize: 16 },
+  bulkDeleteButton: { marginTop: 12, borderRadius: 12 },
+  bulkDeleteContent: { height: 48 },
 });

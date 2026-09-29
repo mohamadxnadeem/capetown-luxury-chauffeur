@@ -22,7 +22,7 @@ export function useVehicles(filters?: VehicleListFilters) {
     // doesn't show stale data while the new query runs.
     queryKey: ["admin", "vehicles", filters ?? {}],
     queryFn: () => fetchVehicles(filters),
-    staleTime: 5 * 60_000,
+    // staleTime inherits QueryClient default (30s).
   });
 }
 

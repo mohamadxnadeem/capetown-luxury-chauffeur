@@ -2,12 +2,16 @@ import type { NavigatorScreenParams } from "@react-navigation/native";
 
 export type AdminTabsParamList = {
   Home: undefined;
+  Inbox: undefined;
   Finance: undefined;
   Vehicles: undefined;
-  // The New tab can be opened with a vehicleId pre-selected (from
-  // VehicleDetail's "Book this vehicle") and/or dates pre-filled (from the
-  // availability search).
-  New: { vehicleId?: number; dates?: string[] } | undefined;
+  // Combined Villas + Hotels tab with a top toggle. Kept as narrow as
+  // possible to stay comfortable on small phones.
+  Accommodation: undefined;
+  // Packages tab replaced the old "New" booking tab — booking creation now
+  // lives in the stack (NewBooking) and is reached via the Home FAB or from
+  // the VehicleSearch / VehicleDetail "Book" buttons.
+  Packages: undefined;
   Profile: undefined;
 };
 
@@ -30,6 +34,41 @@ export type RootStackParamList = {
   VehicleEdit: { vehicleId?: number };
   // Availability search — pick dates, see which vehicles are free.
   VehicleSearch: undefined;
+  // Month calendar view — tap a day to see all trips for that day.
+  BookingCalendar: undefined;
   // Manage drivers — list + add new (name + WhatsApp only).
   DriverList: undefined;
+  // Villa management. List opens from the Accommodation tab; detail
+  // shows availability + edit + book buttons; edit covers both create
+  // (no villaId) and edit modes.
+  VillaList: undefined;
+  VillaDetail: { villaId: number };
+  VillaEdit: { villaId?: number };
+  // Hotel management. Same shape as villas.
+  HotelList: undefined;
+  HotelDetail: { hotelId: number };
+  HotelEdit: { hotelId?: number };
+  // Package management. List opens from the Packages tab; edit covers
+  // both create and edit modes.
+  PackageEdit: { packageId?: number };
+  // Booking creation moved from a tab to a stack screen so the Packages
+  // tab could take its slot. Same params shape as before, plus optional
+  // preselectAccommodation for launching from a Villa/Hotel detail — the
+  // form enters "no chauffeur" mode with that accommodation pre-added.
+  NewBooking:
+    | {
+        vehicleId?: number;
+        dates?: string[];
+        preselectAccommodation?: { kind: "villa" | "hotel"; id: number };
+      }
+    | undefined;
+  // Multi-vehicle proposal wrapper. Shows combined total, one Yoco link,
+  // one client-facing proposal URL. Child bookings navigated to their own
+  // BookingDetail from within.
+  BookingGroupDetail: { groupId: number };
+  // Mailbot inbox — list of client conversations (email/WhatsApp) with
+  // pending AI drafts to approve or reject.
+  Inbox: undefined;
+  InboxConversation: { conversationId: number };
+  MailbotSettings: undefined;
 };

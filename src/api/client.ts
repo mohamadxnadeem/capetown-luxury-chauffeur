@@ -4,6 +4,10 @@ import * as SecureStore from "expo-secure-store";
 
 const ACCESS_KEY = "auth.access";
 const REFRESH_KEY = "auth.refresh";
+// Persisted "admin" or "driver" — set at login from the response's isAdmin
+// flag. Lets the cold-start bootstrap skip the /api/driver/me/ round-trip
+// for known admins (that endpoint 404s for them, which was cluttering logs).
+const ROLE_KEY = "auth.role";
 
 const apiBaseUrl =
   (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl ??
@@ -16,6 +20,10 @@ export const tokenStorage = {
   async getRefresh() {
     return SecureStore.getItemAsync(REFRESH_KEY);
   },
+  async getRole(): Promise<"admin" | "driver" | null> {
+    const raw = await SecureStore.getItemAsync(ROLE_KEY);
+    return raw === "admin" || raw === "driver" ? raw : null;
+  },
   async set(access: string, refresh: string) {
     await SecureStore.setItemAsync(ACCESS_KEY, access);
     await SecureStore.setItemAsync(REFRESH_KEY, refresh);
@@ -23,15 +31,22 @@ export const tokenStorage = {
   async setAccess(access: string) {
     await SecureStore.setItemAsync(ACCESS_KEY, access);
   },
+  async setRole(role: "admin" | "driver") {
+    await SecureStore.setItemAsync(ROLE_KEY, role);
+  },
   async clear() {
     await SecureStore.deleteItemAsync(ACCESS_KEY);
     await SecureStore.deleteItemAsync(REFRESH_KEY);
+    await SecureStore.deleteItemAsync(ROLE_KEY);
   },
 };
 
 export const api = axios.create({
   baseURL: apiBaseUrl,
-  timeout: 15000,
+  // 30s so a slow-but-eventually-resolving request has time; anything
+  // longer is a stuck server and should surface an error rather than a
+  // permanent spinner. Cold-start auth (detectRole) overrides with 60s.
+  timeout: 30_000,
 });
 
 // Hook a handler that fires when refresh fails — the app uses this to bounce

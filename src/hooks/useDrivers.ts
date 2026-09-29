@@ -6,7 +6,7 @@ export function useDrivers() {
   return useQuery({
     queryKey: ["admin", "drivers"],
     queryFn: fetchDrivers,
-    staleTime: 5 * 60_000,
+    // staleTime inherits QueryClient default (30s).
   });
 }
 

@@ -75,13 +75,10 @@ export default function VehicleSearchScreen() {
 
   function bookVehicle(vehicleId: number) {
     if (!searched) return;
-    navigation.navigate("Tabs", {
-      screen: "New",
-      params: {
-        vehicleId,
-        dates: datesBetween(searched.start, searched.end),
-      },
-    } as never);
+    navigation.navigate("NewBooking", {
+      vehicleId,
+      dates: datesBetween(searched.start, searched.end),
+    });
   }
 
   const available = query.data?.available_vehicles ?? [];

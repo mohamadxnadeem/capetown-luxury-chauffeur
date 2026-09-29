@@ -12,13 +12,25 @@ import NewBookingScreen from "@/screens/NewBookingScreen";
 import VehicleDetailScreen from "@/screens/VehicleDetailScreen";
 import VehicleEditScreen from "@/screens/VehicleEditScreen";
 import VehicleSearchScreen from "@/screens/VehicleSearchScreen";
+import BookingCalendarScreen from "@/screens/BookingCalendarScreen";
+import BookingGroupDetailScreen from "@/screens/BookingGroupDetailScreen";
+import InboxConversationScreen from "@/screens/InboxConversationScreen";
+import MailbotSettingsScreen from "@/screens/MailbotSettingsScreen";
 import DriverListScreen from "@/screens/DriverListScreen";
+import VillaDetailScreen from "@/screens/VillaDetailScreen";
+import VillaEditScreen from "@/screens/VillaEditScreen";
+import HotelDetailScreen from "@/screens/HotelDetailScreen";
+import HotelEditScreen from "@/screens/HotelEditScreen";
+import PackageEditScreen from "@/screens/PackageEditScreen";
 import AdminTabs from "@/navigation/AdminTabs";
 import DriverTabs from "@/navigation/DriverTabs";
 import { useAuthStore } from "@/state/auth";
 import { detectRole } from "@/api/auth";
 import { setOnAuthFailure, tokenStorage } from "@/api/client";
-import { extractBookingFromNotification } from "@/utils/push";
+import {
+  extractBookingFromNotification,
+  extractConversationFromNotification,
+} from "@/utils/push";
 import type { RootStackParamList } from "@/navigation/types";
 import { colors, navTheme } from "@/theme";
 
@@ -64,41 +76,48 @@ export default function AppNavigator() {
     return () => setOnAuthFailure(null);
   }, [signedOut]);
 
-  // Notification deep-link: open BookingDetail when the user taps a push.
+  // Notification deep-link: open BookingDetail OR the Inbox conversation
+  // depending on which id the notification carries. A Mailbot draft carries
+  // conversation_id (and takes precedence — the operator lands where they
+  // can approve). Booking reminders carry booking_id/booking_ref.
   useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const payload = extractBookingFromNotification(
-        response.notification.request.content.data
-      );
-      if (!payload) return;
-      // Only navigate once we're past login — otherwise stash and let the next
-      // mount handle it. Simple version: try-and-bail.
-      if (!navRef.current?.isReady()) return;
-      // Drivers identify trips by booking_ref; admins by booking_id.
-      navRef.current.navigate("BookingDetail", {
-        bookingId: payload.booking_id,
-        bookingRef: payload.booking_ref,
-      });
-    });
-    // Also handle the case where the app was launched cold from a tap.
+    function routeFromNotification(
+      data: Notifications.NotificationContent["data"] | undefined
+    ) {
+      if (!navRef.current?.isReady()) return false;
+      const conversation = extractConversationFromNotification(data);
+      if (conversation) {
+        navRef.current.navigate("InboxConversation", {
+          conversationId: conversation.conversation_id,
+        });
+        return true;
+      }
+      const booking = extractBookingFromNotification(data);
+      if (booking) {
+        navRef.current.navigate("BookingDetail", {
+          bookingId: booking.booking_id,
+          bookingRef: booking.booking_ref,
+        });
+        return true;
+      }
+      return false;
+    }
+
+    const sub = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        routeFromNotification(response.notification.request.content.data);
+      }
+    );
+    // Cold-start tap: navigator may not be ready yet, poll briefly.
     (async () => {
       const last = await Notifications.getLastNotificationResponseAsync();
       if (!last) return;
-      const payload = extractBookingFromNotification(
-        last.notification.request.content.data
-      );
-      if (!payload) return;
-      // Defer until navigator mounts.
+      const data = last.notification.request.content.data;
       const interval = setInterval(() => {
-        if (navRef.current?.isReady()) {
-          navRef.current.navigate("BookingDetail", {
-            bookingId: payload.booking_id,
-            bookingRef: payload.booking_ref,
-          });
+        if (routeFromNotification(data)) {
           clearInterval(interval);
         }
       }, 100);
-      // Give up after a few seconds.
       setTimeout(() => clearInterval(interval), 5000);
     })();
     return () => sub.remove();
@@ -161,9 +180,59 @@ export default function AppNavigator() {
               options={{ title: "Find Vehicles" }}
             />
             <Stack.Screen
+              name="BookingCalendar"
+              component={BookingCalendarScreen}
+              options={{ title: "Calendar" }}
+            />
+            <Stack.Screen
+              name="BookingGroupDetail"
+              component={BookingGroupDetailScreen}
+              options={{ title: "Proposal" }}
+            />
+            <Stack.Screen
+              name="InboxConversation"
+              component={InboxConversationScreen}
+              options={{ title: "Conversation" }}
+            />
+            <Stack.Screen
+              name="MailbotSettings"
+              component={MailbotSettingsScreen}
+              options={{ title: "Mailbot" }}
+            />
+            <Stack.Screen
               name="DriverList"
               component={DriverListScreen}
               options={{ title: "Drivers" }}
+            />
+            <Stack.Screen
+              name="VillaDetail"
+              component={VillaDetailScreen}
+              options={{ title: "Villa" }}
+            />
+            <Stack.Screen
+              name="VillaEdit"
+              component={VillaEditScreen}
+              options={{ title: "Edit Villa" }}
+            />
+            <Stack.Screen
+              name="HotelDetail"
+              component={HotelDetailScreen}
+              options={{ title: "Hotel" }}
+            />
+            <Stack.Screen
+              name="HotelEdit"
+              component={HotelEditScreen}
+              options={{ title: "Edit Hotel" }}
+            />
+            <Stack.Screen
+              name="PackageEdit"
+              component={PackageEditScreen}
+              options={{ title: "Edit Package" }}
+            />
+            <Stack.Screen
+              name="NewBooking"
+              component={NewBookingScreen}
+              options={{ title: "New Booking" }}
             />
           </>
         )}

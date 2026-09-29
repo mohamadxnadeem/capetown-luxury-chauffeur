@@ -144,12 +144,9 @@ export default function VehicleDetailScreen() {
   const photos = v.cover_photos ?? [];
 
   function bookThisVehicle() {
-    // Jump to the New tab with vehicleId pre-selected. The tab screen reads
+    // Booking creation now lives in the stack — the screen reads
     // route.params and pre-populates its form.
-    navigation.navigate("Tabs", {
-      screen: "New",
-      params: { vehicleId: v.id },
-    } as never);
+    navigation.navigate("NewBooking", { vehicleId: v.id });
   }
 
   return (

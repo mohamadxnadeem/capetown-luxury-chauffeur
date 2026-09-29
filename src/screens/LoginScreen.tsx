@@ -28,17 +28,18 @@ export default function LoginScreen() {
       await login(username.trim(), password);
       const { role, driver } = await detectRole();
 
-      if (role === "driver") {
-        try {
-          const token = await registerForPushNotificationsAsync();
-          if (token) {
-            await registerPushToken(token);
-          }
-        } catch (err) {
-          // Push registration is non-fatal — log and carry on so the driver
-          // can still use the app even if notifications didn't register.
-          console.warn("[login] push token registration failed", err);
+      // Register the push token for both roles — admins get booking-start
+      // reminders (7d / 1d / 2h / 30m before) and drivers get trip
+      // assignments. registerPushToken picks the right per-role endpoint.
+      try {
+        const token = await registerForPushNotificationsAsync();
+        if (token) {
+          await registerPushToken(token);
         }
+      } catch (err) {
+        // Push registration is non-fatal — log and carry on so the user
+        // can still use the app even if notifications didn't register.
+        console.warn("[login] push token registration failed", err);
       }
 
       signedIn(role, driver);

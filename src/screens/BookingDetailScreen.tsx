@@ -19,11 +19,17 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAdminBooking, useDriverTrip, useUpdateBooking } from "@/hooks/useBookings";
 import { useDrivers } from "@/hooks/useDrivers";
 import { useAuthStore } from "@/state/auth";
 import type { RootStackParamList } from "@/navigation/types";
-import { bookingDateRange, type Booking } from "@/api/types";
+import {
+  bookingDateRange,
+  type AccommodationSegment,
+  type Booking,
+} from "@/api/types";
+import { ShimmerImage } from "@/components/ShimmerImage";
 import { bookingDetailUrl, driverBookingPageUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
 import { DayScheduleBar } from "@/components/DayScheduleBar";
@@ -84,6 +90,51 @@ function driverMessage(b: Booking): string {
     .join("\n");
 }
 
+// Google review link for Cape Town Concierge — used in both the client and
+// driver review-request templates. If this ever changes, update it here.
+const REVIEW_URL = "https://g.page/r/CdDvksuxeMPLEBM/review";
+
+function paymentMessage(b: Booking): string {
+  const total = b.total_client_amount ? `R ${b.total_client_amount}` : null;
+  return [
+    `Hi ${b.customer_name || "there"},`,
+    "",
+    `Here's your payment link for booking ${b.booking_reference} with Cape Town Concierge.`,
+    "",
+    total ? `💳 Amount due: ${total}` : null,
+    `🔗 Pay securely: ${b.payment_link}`,
+    "",
+    `Once payment is received your booking is fully confirmed. Thank you!`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function reviewClientMessage(b: Booking): string {
+  return [
+    `Hi ${b.customer_name || "there"},`,
+    "",
+    `Thank you for choosing Cape Town Concierge — it was a pleasure having you.`,
+    "",
+    `If you have a moment, we'd really appreciate a quick Google review:`,
+    REVIEW_URL,
+    "",
+    `Looking forward to driving you again!`,
+  ].join("\n");
+}
+
+function reviewDriverMessage(b: Booking): string {
+  return [
+    `Hi ${b.driver?.full_name || "there"},`,
+    "",
+    `When you drop ${b.customer_name || "the client"} (booking ${b.booking_reference}), please share this Google review link with them:`,
+    "",
+    REVIEW_URL,
+    "",
+    `A short personal ask at the end of the trip makes a big difference. Thanks!`,
+  ].join("\n");
+}
+
 async function openWhatsApp(phone: string, message: string) {
   const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
   try {
@@ -128,6 +179,7 @@ export default function BookingDetailScreen() {
   const error = adminQuery.error ?? driverQuery.error;
 
   const updateMutation = useUpdateBooking(booking?.id);
+  const queryClient = useQueryClient();
 
   // Admin-only: full driver list for the quick-assign picker.
   const driversQuery = useDrivers();
@@ -202,6 +254,42 @@ export default function BookingDetailScreen() {
     }
   }
 
+  function confirmMarkPaid() {
+    if (!booking) return;
+    const bookingId = booking.id;
+    Alert.alert(
+      "Mark as paid?",
+      "Use this when the client paid outside Yoco (cash, EFT, another gateway). This won't create a Yoco receipt.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Mark paid",
+          onPress: async () => {
+            // Snapshot the current booking so we can roll back on failure.
+            const detailKey = ["admin", "booking", bookingId];
+            const previous = queryClient.getQueryData<Booking>(detailKey);
+
+            // Optimistically flip is_paid so the ✓ PAID pill + payment
+            // buttons update instantly; backend auto-stamps paid_at on save.
+            queryClient.setQueryData<Booking | undefined>(detailKey, (b) =>
+              b ? { ...b, is_paid: true } : b
+            );
+
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await updateMutation.mutateAsync({ is_paid: true } as any);
+            } catch (err: unknown) {
+              // Rollback — restore the previous cached booking so the pill
+              // reverts before we show the error alert.
+              queryClient.setQueryData(detailKey, previous);
+              Alert.alert("Couldn't mark as paid", formatApiError(err));
+            }
+          },
+        },
+      ]
+    );
+  }
+
   return (
     <>
       <ScrollView
@@ -217,10 +305,49 @@ export default function BookingDetailScreen() {
           dateRangeLabel={dateRangeLabel}
         />
 
-        {/* WhatsApp actions — admin only. Driver button only when a driver
-            with a WhatsApp number is assigned; sends a different message that
-            includes a link to the driver-facing booking page. */}
-        {isAdmin && !isCancelled && (clientDigits || driverDigits) ? (
+        {/* Warn the operator when a booking has no reference — sharing links
+            without one would produce a broken /booking// URL. Root cause is
+            usually a backend serializer that didn't generate a reference for
+            an accommodation-only booking. */}
+        {isAdmin && !booking.booking_reference ? (
+          <View style={styles.noRefBanner}>
+            <Text style={styles.noRefBannerText}>
+              This booking is missing a reference. Client/driver share links
+              are disabled until the backend generates one.
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Group chip: this booking is part of a multi-vehicle proposal.
+            Tap to jump to the group where the combined total and single
+            client payment link live. */}
+        {isAdmin && booking.group_id && booking.group_reference ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() =>
+              navigation.navigate("BookingGroupDetail", {
+                groupId: booking.group_id!,
+              })
+            }
+            style={styles.groupChip}
+          >
+            <Text style={styles.groupChipIcon}>↔</Text>
+            <View style={styles.groupChipBody}>
+              <Text style={styles.groupChipTitle}>Part of a group proposal</Text>
+              <Text style={styles.groupChipRef}>
+                {booking.group_reference}
+              </Text>
+            </View>
+            <Text style={styles.groupChipChevron}>›</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {/* WhatsApp actions — admin only. All gated on booking.booking_reference
+            since every template embeds it in the message + shareable URL. */}
+        {isAdmin &&
+        !isCancelled &&
+        booking.booking_reference &&
+        (clientDigits || driverDigits) ? (
           <View style={styles.actionsRow}>
             {clientDigits ? (
               <ActionButton
@@ -240,6 +367,45 @@ export default function BookingDetailScreen() {
                 }
               />
             ) : null}
+            {/* Payment link only renders when the backend has created the Yoco
+                link AND the booking hasn't been paid yet. */}
+            {clientDigits && booking.payment_link && !booking.is_paid ? (
+              <ActionButton
+                icon="credit-card-outline"
+                label="Send payment link"
+                onPress={() =>
+                  openWhatsApp(clientDigits, paymentMessage(booking))
+                }
+              />
+            ) : null}
+            {clientDigits ? (
+              <ActionButton
+                icon="star-outline"
+                label="Request review"
+                onPress={() =>
+                  openWhatsApp(clientDigits, reviewClientMessage(booking))
+                }
+              />
+            ) : null}
+            {driverDigits ? (
+              <ActionButton
+                icon="star-outline"
+                label="Review link to driver"
+                onPress={() =>
+                  openWhatsApp(driverDigits, reviewDriverMessage(booking))
+                }
+              />
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* Paid pill — replaces the payment link button once Yoco webhook
+            flips is_paid. */}
+        {isAdmin && booking.is_paid ? (
+          <View style={styles.paidPillWrap}>
+            <View style={styles.paidPill}>
+              <Text style={styles.paidPillText}>✓ PAID</Text>
+            </View>
           </View>
         ) : null}
 
@@ -327,6 +493,76 @@ export default function BookingDetailScreen() {
           </Card.Content>
         </Card>
 
+        {/* Bundle add-ons — only renders if the operator attached any. */}
+        {(booking.accommodation_segments &&
+          booking.accommodation_segments.length > 0) ||
+        booking.villa ||
+        (booking.experiences && booking.experiences.length > 0) ||
+        (booking.included_packages && booking.included_packages.length > 0) ? (
+          <Card style={styles.card} mode="elevated">
+            <Card.Content>
+              <SectionLabel>Bundle</SectionLabel>
+
+              {/* Accommodation segments — new shape. If missing, fall back
+                  to the legacy single `villa` FK for pre-migration bookings. */}
+              {booking.accommodation_segments &&
+              booking.accommodation_segments.length > 0
+                ? booking.accommodation_segments.map((s) => (
+                    <AccommodationSegmentRow key={s.id ?? `${s.start_date}-${s.end_date}`} segment={s} />
+                  ))
+                : booking.villa
+                  ? (
+                      <View style={styles.bundleItem}>
+                        <Text style={styles.bundleKind}>VILLA</Text>
+                        <Text style={styles.bundleTitle}>
+                          {booking.villa.name}
+                        </Text>
+                        {booking.villa.location ? (
+                          <Text style={styles.bundleSub}>
+                            {booking.villa.location}
+                            {booking.villa.price_per_night
+                              ? `  ·  ${booking.villa.price_currency || "ZAR"} ${booking.villa.price_per_night} / night`
+                              : ""}
+                          </Text>
+                        ) : null}
+                      </View>
+                    )
+                  : null}
+
+              {(booking.experiences ?? []).map((e) => (
+                <View key={e.id} style={styles.bundleItem}>
+                  <Text style={styles.bundleKind}>EXPERIENCE</Text>
+                  <Text style={styles.bundleTitle}>{e.title}</Text>
+                  {e.duration || e.price_from ? (
+                    <Text style={styles.bundleSub}>
+                      {e.duration}
+                      {e.duration && e.price_from ? "  ·  " : ""}
+                      {e.price_from
+                        ? `from ${e.currency || "ZAR"} ${e.price_from}`
+                        : ""}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+              {(booking.included_packages ?? []).map((p) => (
+                <View key={p.id} style={styles.bundleItem}>
+                  <Text style={styles.bundleKind}>PACKAGE</Text>
+                  <Text style={styles.bundleTitle}>{p.name}</Text>
+                  {p.tagline || p.price_from ? (
+                    <Text style={styles.bundleSub}>
+                      {p.tagline}
+                      {p.tagline && p.price_from ? "  ·  " : ""}
+                      {p.price_from
+                        ? `from ${p.price_currency || "ZAR"} ${p.price_from}`
+                        : ""}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+            </Card.Content>
+          </Card>
+        ) : null}
+
         {days.length > 0 ? (
           <Card style={styles.card} mode="elevated">
             <Card.Content>
@@ -388,6 +624,21 @@ export default function BookingDetailScreen() {
               </View>
 
               <SectionLabel>Manage booking</SectionLabel>
+              {!booking.is_paid ? (
+                <Button
+                  mode="outlined"
+                  onPress={confirmMarkPaid}
+                  loading={updateMutation.isPending}
+                  disabled={updateMutation.isPending}
+                  style={styles.manageButton}
+                  contentStyle={styles.manageButtonContent}
+                  labelStyle={styles.manageLabel}
+                  textColor={colors.primary}
+                  icon="check-circle-outline"
+                >
+                  Mark as paid
+                </Button>
+              ) : null}
               <Button
                 mode="outlined"
                 onPress={() =>
@@ -512,6 +763,62 @@ function ActionButton({
   );
 }
 
+// Per-segment accommodation row: kind badge + date range + name + hero
+// photo strip pulling the linked villa / hotel's cover_photos so the
+// operator can eyeball what the client will see.
+function AccommodationSegmentRow({ segment }: { segment: AccommodationSegment }) {
+  const target = segment.kind === "villa" ? segment.villa : segment.hotel;
+  const name = target?.name ?? "(missing)";
+  const location =
+    segment.kind === "villa"
+      ? segment.villa?.location
+      : segment.hotel?.location;
+  const priceLine =
+    segment.kind === "villa" && segment.villa?.price_per_night
+      ? `${segment.villa.price_currency || "ZAR"} ${segment.villa.price_per_night} / night`
+      : segment.kind === "hotel" && segment.hotel?.price_per_night_from
+        ? `from ${segment.hotel.price_currency || "ZAR"} ${segment.hotel.price_per_night_from} / night`
+        : null;
+
+  // Show up to 3 cover photos as a horizontal strip.
+  const photos = (target?.cover_photos ?? []).slice(0, 3);
+
+  const dateLabel =
+    segment.start_date === segment.end_date
+      ? segment.start_date
+      : `${segment.start_date} → ${segment.end_date}`;
+
+  return (
+    <View style={styles.bundleItem}>
+      <Text style={styles.bundleKind}>
+        {segment.kind.toUpperCase()}  ·  {dateLabel}
+      </Text>
+      <Text style={styles.bundleTitle}>{name}</Text>
+      {location || priceLine ? (
+        <Text style={styles.bundleSub}>
+          {location}
+          {location && priceLine ? "  ·  " : ""}
+          {priceLine}
+        </Text>
+      ) : null}
+      {segment.notes ? (
+        <Text style={styles.bundleNotes}>{segment.notes}</Text>
+      ) : null}
+      {photos.length > 0 ? (
+        <View style={styles.bundlePhotoStrip}>
+          {photos.map((p) => (
+            <ShimmerImage
+              key={p.id}
+              uri={p.cover_photos}
+              style={styles.bundlePhoto}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return <Text style={styles.sectionLabel}>{children}</Text>;
 }
@@ -586,17 +893,38 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // Action row
+  // Action row — two buttons per row, wraps as more actions become available.
   actionsRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
     paddingHorizontal: 16,
     marginTop: 16,
     marginBottom: 4,
   },
-  actionButton: { flex: 1, borderRadius: 14 },
+  actionButton: { flexBasis: "48%", flexGrow: 1, borderRadius: 14 },
   actionContent: { height: 48 },
   actionLabel: { fontWeight: "700", fontSize: 13 },
+
+  // Paid confirmation pill — shown after Yoco webhook flips is_paid.
+  paidPillWrap: {
+    alignItems: "center",
+    paddingHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  paidPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#dff0e7",
+  },
+  paidPillText: {
+    color: colors.primary,
+    fontWeight: "800",
+    fontSize: 12,
+    letterSpacing: 1,
+  },
 
   // Cards
   card: {
@@ -624,6 +952,39 @@ const styles = StyleSheet.create({
   },
   rowValue: { flex: 1, color: colors.text, fontSize: 14 },
   rowValueBold: { color: colors.primary, fontWeight: "800" },
+
+  // Bundle add-ons (villa / experiences / packages).
+  bundleItem: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  bundleKind: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    marginBottom: 4,
+  },
+  bundleTitle: { color: colors.heading, fontSize: 15, fontWeight: "700" },
+  bundleSub: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  bundleNotes: {
+    color: colors.text,
+    fontSize: 12,
+    fontStyle: "italic",
+    marginTop: 6,
+  },
+  bundlePhotoStrip: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 8,
+  },
+  bundlePhoto: {
+    width: 72,
+    height: 54,
+    borderRadius: 8,
+    backgroundColor: colors.surfaceMuted,
+  },
 
   driverPickerRow: {
     flexDirection: "row",
@@ -716,4 +1077,54 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cancelledText: { color: "#b03b3b", fontWeight: "700" },
+
+  // Group membership chip: booking belongs to a multi-vehicle proposal.
+  groupChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(11,91,51,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(11,91,51,0.2)",
+  },
+  groupChipIcon: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: colors.primary,
+    marginRight: 10,
+  },
+  groupChipBody: { flex: 1 },
+  groupChipTitle: {
+    color: colors.heading,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  groupChipRef: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  groupChipChevron: { color: colors.primary, fontSize: 22, marginLeft: 6 },
+
+  // Missing-reference warning banner.
+  noRefBanner: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#fdf1d8",
+    borderWidth: 1,
+    borderColor: "#e8d29a",
+  },
+  noRefBannerText: {
+    color: "#8a6411",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
 });

@@ -169,7 +169,10 @@ export interface Booking {
   booking_reference: string;
   title: string;
   status: BookingStatus;
-  car: Vehicle;
+  // Nullable — an accommodation-only booking has no chauffeur, so backend
+  // returns car: null. Any UI that touches booking.car.something MUST
+  // guard with `?.` or fall back.
+  car: Vehicle | null;
   driver: DriverNested | null;
   customer_name: string;
   customer_email: string;
@@ -190,18 +193,66 @@ export interface Booking {
   total_profit?: string; // omitted on driver-view
   total_days: number;
   is_multi_day: boolean;
+  // Yoco-hosted payment link the client uses to pay total_client_amount.
+  // Backend creates this when the booking is confirmed; null until then.
+  // is_paid flips to true via Yoco webhook on successful charge.
+  payment_link?: string | null;
+  is_paid?: boolean;
+  // Proposal bundle add-ons. All optional — a plain vehicle booking has
+  // them all empty. Operator assembles a full client proposal by adding
+  // accommodation segments (each pointing at a villa or hotel), picking
+  // day-tour experiences, and/or attaching pre-built packages. Backend
+  // nests them on read; on write the app sends the corresponding ids (see
+  // CreateBookingPayload).
+  //
+  // `villa` (single) is the legacy pre-segments field — kept for backward
+  // compat until the backend migration lands. New code should prefer
+  // accommodation_segments.
+  villa?: Villa | null;
+  accommodation_segments?: AccommodationSegment[];
+  experiences?: Experience[];
+  included_packages?: TravelPackage[];
+  // When this booking belongs to a BookingGroup (multi-vehicle proposal),
+  // both are populated. Standalone bookings leave them null. The mobile app
+  // uses these to show a small group chip on booking cards and to route
+  // taps to the group detail screen instead of the single-booking screen —
+  // the client-facing payment link and total live on the group, not here.
+  group_id?: number | null;
+  group_reference?: string | null;
+  // Which source created the booking. New non-'manual' values get a small
+  // badge in the UI so the operator can tell agent-drafted bookings apart
+  // from ones they created themselves.
+  source?: "manual" | "email_agent" | "whatsapp_agent";
   created_at: string;
   updated_at: string;
 }
 
-// Returns [firstDate, lastDate] for a booking, preferring nested days when
-// present (detail responses) and falling back to top-level start_date/end_date
-// (list responses). Empty strings when no date info is available.
+// Returns [firstDate, lastDate] for a booking. Tries every date source the
+// backend serializers ever provide so no booking silently disappears from
+// the calendar / upcoming list:
+//   1. Nested days[] — always on detail responses, sometimes on list.
+//   2. Top-level start_date / end_date — should be on list responses.
+//   3. accommodation_segments[] — a fallback for accommodation-only
+//      bookings (car === null), which have no days[] but do have segment
+//      dates.
+// Empty strings only when none of the above are populated.
 export function bookingDateRange(b: Booking): [string, string] {
   if (Array.isArray(b.days) && b.days.length > 0) {
     return [b.days[0].date, b.days[b.days.length - 1].date];
   }
-  return [b.start_date ?? "", b.end_date ?? b.start_date ?? ""];
+  if (b.start_date) {
+    return [b.start_date, b.end_date ?? b.start_date];
+  }
+  if (
+    Array.isArray(b.accommodation_segments) &&
+    b.accommodation_segments.length > 0
+  ) {
+    const segs = [...b.accommodation_segments].sort((x, y) =>
+      x.start_date.localeCompare(y.start_date)
+    );
+    return [segs[0].start_date, segs[segs.length - 1].end_date];
+  }
+  return ["", ""];
 }
 
 // POST /api/admin/bookings/create/ payload — booking_reference is server-generated.
@@ -217,7 +268,9 @@ export interface CreateBookingDayPayload {
 }
 
 export interface CreateBookingPayload {
-  car: number;
+  // null = accommodation-only booking with no chauffeur. Backend must
+  // treat this as a valid state (no per-day rates, no driver).
+  car: number | null;
   // null = no driver assigned (booking can be created unassigned and a driver
   // attached later). A number assigns that specific driver.
   driver?: number | null;
@@ -230,6 +283,20 @@ export interface CreateBookingPayload {
   trip_description: string;
   status?: BookingStatus;
   days: CreateBookingDayPayload[];
+  // Proposal bundle add-ons — all optional. Send the FK ids; the backend
+  // resolves to nested objects on read.
+  //
+  // For accommodation, prefer `accommodation_segments` (per-date villa or
+  // hotel). `villa_id` is the legacy single-villa field; keep sending it
+  // for backward compat until backend fully migrates to segments.
+  villa_id?: number | null;
+  accommodation_segments?: AccommodationSegmentPayload[];
+  experience_ids?: number[];
+  package_ids?: number[];
+  // Operator-set total for accommodation-only bookings where per-day
+  // vehicle rates don't apply. Ignored when car is set (backend derives
+  // total from sum of days[].client_rate in that case).
+  custom_total_client_amount?: string;
 }
 
 // POST /api/admin/drivers/create/ — minimal payload. Backend creates the
@@ -237,6 +304,278 @@ export interface CreateBookingPayload {
 export interface CreateDriverPayload {
   full_name: string;
   whatsapp: string;
+}
+
+// ---- Villa (luxury rental properties) -----------------------------------
+
+export type VillaArea =
+  | "camps_bay"
+  | "clifton"
+  | "bantry_bay"
+  | "constantia"
+  | "franschhoek"
+  | "stellenbosch"
+  | "other";
+
+export interface VillaPhoto {
+  id: number;
+  cover_photos: string; // full S3 URL — matches VehicleCoverPhoto shape
+  order: number;
+  is_featured: boolean;
+}
+
+export interface Villa {
+  id: number;
+  name: string;
+  slug: string;
+  location: string;
+  area: VillaArea;
+  bedrooms: number;
+  bathrooms: number;
+  max_guests: number;
+  price_per_night: string; // decimal string
+  price_currency: string; // "ZAR"
+  short_description: string;
+  description: string; // HTML
+  features: string[];
+  nox_property_id: string;
+  nox_booking_url: string;
+  is_featured: boolean;
+  is_active: boolean;
+  sort_order: number;
+  cover_photos?: VillaPhoto[];
+  // Flat URL list — useful when we only need URLs. Optional because some
+  // legacy responses may omit it.
+  images?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateVillaPayload {
+  name: string;
+  slug?: string;
+  location?: string;
+  area?: VillaArea;
+  bedrooms?: number;
+  bathrooms?: number;
+  max_guests?: number;
+  price_per_night?: string;
+  price_currency?: string;
+  short_description?: string;
+  description?: string;
+  features?: string[];
+  nox_property_id?: string;
+  nox_booking_url?: string;
+  is_featured?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+}
+
+export type UpdateVillaPayload = Partial<CreateVillaPayload>;
+
+export interface VillaListFilters {
+  search?: string;
+  area?: VillaArea;
+  is_active?: boolean;
+  is_featured?: boolean;
+}
+
+// ---- Hotel (mirror of Villa with 2 hotel-specific fields) ---------------
+
+export interface HotelPhoto {
+  id: number;
+  hotel: number;
+  cover_photos: string; // S3 URL
+  order: number;
+  is_featured: boolean;
+}
+
+export interface Hotel {
+  id: number;
+  name: string;
+  slug: string;
+  location: string;
+  // Backend returns display strings like "Camps Bay" or "city-bowl" here,
+  // NOT the VillaArea enum — keep as plain string.
+  area: string;
+  // These four can all be null on hotels that haven't been fully filled in.
+  star_rating: number | null;
+  bedrooms_available: number | null;
+  max_guests: number | null;
+  price_per_night_from: string | null; // decimal string
+  room_types: string[];
+  price_currency: string;
+  short_description: string;
+  description: string; // HTML
+  features: string[];
+  is_featured: boolean;
+  is_active: boolean;
+  sort_order: number;
+  cover_photos?: HotelPhoto[];
+  images?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateHotelPayload {
+  name: string;
+  slug?: string;
+  location?: string;
+  area?: VillaArea;
+  star_rating?: number;
+  room_types?: string[];
+  bedrooms_available?: number;
+  max_guests?: number;
+  price_per_night_from?: string;
+  price_currency?: string;
+  short_description?: string;
+  description?: string;
+  features?: string[];
+  is_featured?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+}
+
+export type UpdateHotelPayload = Partial<CreateHotelPayload>;
+
+export interface HotelListFilters {
+  search?: string;
+  area?: VillaArea;
+  is_active?: boolean;
+  is_featured?: boolean;
+}
+
+// ---- Accommodation segments (per-date villa/hotel on a booking) ---------
+
+export type AccommodationKind = "villa" | "hotel";
+
+// Read shape — backend nests the full villa/hotel object on the segment
+// so the client-facing confirmation page can render images/details
+// without a second round-trip.
+export interface AccommodationSegment {
+  id?: number;
+  start_date: string; // YYYY-MM-DD
+  end_date: string; // YYYY-MM-DD (inclusive)
+  kind: AccommodationKind;
+  villa: Villa | null;
+  hotel: Hotel | null;
+  notes: string;
+  order: number;
+}
+
+// Write shape — send FK ids, backend resolves. Send in the order you want
+// them to display.
+export interface AccommodationSegmentPayload {
+  start_date: string;
+  end_date: string;
+  kind: AccommodationKind;
+  villa_id?: number | null;
+  hotel_id?: number | null;
+  notes?: string;
+}
+
+// ---- Travel Packages ----------------------------------------------------
+
+export type PackageCategory =
+  | "cape_town_week"
+  | "winelands_escape"
+  | "family_cape_town"
+  | "custom";
+
+export interface PackageItineraryDay {
+  day: number;
+  title: string;
+  description: string;
+}
+
+export interface TravelPackage {
+  id: number;
+  name: string;
+  slug: string;
+  tagline: string;
+  category: PackageCategory;
+  duration_nights: number | null;
+  max_guests: number | null;
+  price_from: string | null; // decimal string
+  price_currency: string;
+  short_description: string;
+  description: string; // HTML
+  highlights: string[];
+  includes: string[];
+  excludes: string[];
+  itinerary: PackageItineraryDay[];
+  // Linked villa (nested on the read response). When sending writes the
+  // backend expects `villa_id` instead — see CreatePackagePayload.
+  villa: Villa | null;
+  vehicle_type: string;
+  is_featured: boolean;
+  is_active: boolean;
+  sort_order: number;
+  // Same dual photo shape as villas — rich objects + flat URL list.
+  cover_photos?: VillaPhoto[];
+  images?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreatePackagePayload {
+  name: string;
+  slug?: string;
+  tagline?: string;
+  category?: PackageCategory;
+  duration_nights?: number;
+  max_guests?: number;
+  price_from?: string;
+  price_currency?: string;
+  short_description?: string;
+  description?: string;
+  highlights?: string[];
+  includes?: string[];
+  excludes?: string[];
+  itinerary?: PackageItineraryDay[];
+  villa_id?: number | null;
+  vehicle_type?: string;
+  is_featured?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+}
+
+export type UpdatePackagePayload = Partial<CreatePackagePayload>;
+
+export interface PackageListFilters {
+  search?: string;
+  category?: PackageCategory;
+  is_active?: boolean;
+  is_featured?: boolean;
+}
+
+// ---- Experiences (day tours) -------------------------------------------
+
+// The /api/experiences/all/ endpoint wraps each row in an outer envelope:
+//   [{ experience: {...}, cover_photos: [...], average_rating, reviews }]
+// We flatten in the API layer so consumers see plain Experience objects.
+export interface ExperienceCoverPhoto {
+  id: number;
+  experience: number;
+  cover_photos: string; // S3 URL
+  order: number;
+  is_featured: boolean;
+}
+
+export interface Experience {
+  id: number;
+  title: string;
+  slug: string;
+  location: string;
+  duration: string; // free-form, e.g. "8 hours"
+  price_from: string; // decimal string
+  price_to: string | null;
+  currency: string;
+  short_description: string;
+  highlight: string | null;
+  is_featured: boolean;
+  sort_order: number;
+  cover_photos: ExperienceCoverPhoto[];
 }
 
 // ---- Booking-form options -----------------------------------------------
@@ -334,3 +673,153 @@ export interface PaymentSummary {
 // ---- Bare driver shape (admin list) -------------------------------------
 
 export type Driver = DriverProfile;
+
+// ---- Booking groups (multi-vehicle proposals) ---------------------------
+
+// A BookingGroup bundles N vehicle bookings under one client-facing
+// proposal: one URL, one combined total, one Yoco payment link. Individual
+// child bookings still exist for per-vehicle scheduling and driver views —
+// this is the shared wrapper that lets the client see everything and pay
+// once.
+export interface BookingGroup {
+  id: number;
+  group_reference: string; // e.g. "CTC-GRP-A3F9"
+  title: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  notes: string;
+  status: BookingStatus;
+  total_client_amount: string; // decimal string, sum of children
+  currency: string; // "ZAR"
+  // Yoco-hosted checkout URL for the WHOLE group amount. Null until the
+  // group is confirmed; child bookings do NOT get individual payment_link
+  // URLs when they belong to a group.
+  payment_link: string | null;
+  is_paid: boolean;
+  paid_at: string | null;
+  source: "manual" | "email_agent" | "whatsapp_agent";
+  bookings: Booking[];
+  created_at: string;
+  updated_at: string;
+}
+
+// Payload for POST /api/admin/booking-groups/create/. Each entry in
+// `bookings` inherits customer_name/email/phone and status from the group
+// level, so those fields are stripped from CreateBookingPayload here.
+// Title is optional on children too — the group-level title serves as
+// the default, and the backend can synthesize per-child titles if needed
+// (e.g. "Vehicle 2 of proposal <group_reference>").
+export type CreateBookingGroupChildPayload = Omit<
+  CreateBookingPayload,
+  "customer_name" | "customer_email" | "customer_phone" | "status" | "title"
+> & { title?: string };
+
+export interface CreateBookingGroupPayload {
+  title: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  notes?: string;
+  status?: BookingStatus;
+  bookings: CreateBookingGroupChildPayload[];
+}
+
+// PATCH payload for /api/admin/booking-groups/<id>/update/ — every field
+// optional. Backend accepts a subset per call.
+export interface UpdateBookingGroupPayload {
+  title?: string;
+  notes?: string;
+  status?: BookingStatus;
+  customer_name?: string;
+  customer_email?: string;
+  customer_phone?: string;
+}
+
+export interface BookingGroupListFilters {
+  status?: BookingStatus;
+  source?: "manual" | "email_agent" | "whatsapp_agent";
+  search?: string;
+  offset?: number;
+  limit?: number;
+}
+
+// ---- Mailbot inbox ------------------------------------------------------
+
+export type InboxChannel = "email" | "whatsapp";
+export type ConversationStatus = "active" | "archived" | "human_only";
+export type AgentActionKind =
+  | "draft_reply"
+  | "draft_booking"
+  | "draft_booking_group"
+  | "escalate";
+export type AgentActionStatus =
+  | "pending_approval"
+  | "approved"
+  | "rejected"
+  | "expired";
+
+export interface InboxConversationSummary {
+  conversation_id: number;
+  channel: InboxChannel;
+  contact_name: string;
+  contact_identifier: string;
+  status: ConversationStatus;
+  last_message_preview: string;
+  last_message_at: string;
+  unread_count: number;
+  pending_approval_count: number;
+  linked_booking_id: number | null;
+}
+
+export interface InboxMessage {
+  id: number;
+  direction: "in" | "out";
+  sender: "client" | "agent" | "operator";
+  body: string;
+  sent_at: string;
+  read_at: string | null;
+}
+
+export interface AgentActionSummary {
+  id: number;
+  kind: AgentActionKind;
+  status: AgentActionStatus;
+  confidence: number;
+  draft_text: string;
+  reason: string;
+  // For draft_booking: id of the pending CarBooking. For
+  // draft_booking_group: id of the first child booking (fetch the group via
+  // that booking's group_id).
+  output_booking_id: number | null;
+  created_at: string;
+}
+
+export interface InboxConversationDetail {
+  conversation_id: number;
+  channel: InboxChannel;
+  contact_name: string;
+  contact_identifier: string;
+  status: ConversationStatus;
+  human_only_until: string | null;
+  linked_booking_id: number | null;
+  messages: InboxMessage[];
+  pending_actions: AgentActionSummary[];
+}
+
+export interface MailbotStatus {
+  kill_switch: boolean;
+  meta_quality_tier: string | null;
+  drafts_pending_count: number;
+  last_message_processed_at: string | null;
+  gmail_connected: boolean;
+  gmail_watch_expires_at: string | null;
+}
+
+// ---- Admin calendar feed (personal iCal) --------------------------------
+
+export interface CalendarTokenResponse {
+  token: string | null;
+  ical_url: string | null;
+  webcal_url: string | null;
+}

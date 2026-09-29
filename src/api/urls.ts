@@ -39,3 +39,10 @@ export function bookingDetailUrl(
 export function driverBookingPageUrl(bookingRef: string): string {
   return `${clientBaseUrl}/driver/${bookingRef}/`;
 }
+
+// Client-facing proposal page for a BookingGroup — one URL, one total,
+// one Yoco payment link covering every vehicle in the group. This is what
+// the operator forwards to the client instead of N single-booking links.
+export function bookingGroupProposalUrl(groupReference: string): string {
+  return `${clientBaseUrl}/proposal/${groupReference}/`;
+}

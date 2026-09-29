@@ -7,12 +7,11 @@ import {
   View,
 } from "react-native";
 import { ShimmerImage } from "@/components/ShimmerImage";
-import { ActivityIndicator, Text } from "react-native-paper";
+import { ActivityIndicator, FAB, Text } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useAdminBookings } from "@/hooks/useBookings";
-import { useVehicles } from "@/hooks/useVehicles";
 import { bookingDateRange, type Booking, type BookingStatus } from "@/api/types";
 import { colors, gradientPrimary } from "@/theme";
 import type { RootStackParamList } from "@/navigation/types";
@@ -31,54 +30,61 @@ export default function HomeScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const bookingsQuery = useAdminBookings();
-  const vehiclesQuery = useVehicles();
 
   const [filter, setFilter] = useState<StatusFilter>("all");
-
-  // Vehicle cover photos aren't always on the lean bookings-list response,
-  // so resolve them from the full vehicle list by car id.
-  const coverById = useMemo(() => {
-    const m = new Map<number, string | undefined>();
-    for (const v of vehiclesQuery.data ?? []) {
-      const cover =
-        v.cover_photos?.find((p) => p.is_featured)?.cover_photos ??
-        v.cover_photos?.[0]?.cover_photos;
-      m.set(v.id, cover);
-    }
-    return m;
-  }, [vehiclesQuery.data]);
 
   const bookings = useMemo(() => {
     const all = bookingsQuery.data ?? [];
     const filtered =
       filter === "all" ? all : all.filter((b) => b.status === filter);
-    // Newest first — created_at is always present on the list response.
-    return [...filtered].sort((a, b) =>
-      (b.created_at ?? "").localeCompare(a.created_at ?? "")
-    );
+    // Sort by the trip's actual START date ascending — soonest first, so
+    // the operator reads the list in the order trips will happen. Falls
+    // back to created_at only when the start date is unknown so those
+    // rows still have a stable position at the end. This replaces the
+    // old "newest-created first" sort which buried imminent trips.
+    return [...filtered].sort((a, b) => {
+      const [sa] = bookingDateRange(a);
+      const [sb] = bookingDateRange(b);
+      if (sa && sb) return sa.localeCompare(sb);
+      if (sa) return -1;
+      if (sb) return 1;
+      return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+    });
   }, [bookingsQuery.data, filter]);
 
-  // "Starting soon": pending/confirmed bookings whose first date falls within
-  // the next 7 days (today inclusive). Sorted by start date ascending so the
-  // most imminent ones surface first.
-  const startingSoon = useMemo(() => {
+  // Upcoming (non-cancelled, non-completed) bookings whose first day is
+  // between today and 7 days out. One flat list, sorted by start_date then
+  // start_time — the operator reads it top-to-bottom in the order trips
+  // will actually happen.
+  const upcomingWeek = useMemo(() => {
     const all = bookingsQuery.data ?? [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayIso = isoLocal(today);
     const horizon = new Date(today);
     horizon.setDate(horizon.getDate() + 7);
-    const upcoming: { booking: Booking; start: string }[] = [];
+    const horizonIso = isoLocal(horizon);
+
+    const upcoming: Booking[] = [];
     for (const b of all) {
       if (b.status === "cancelled" || b.status === "completed") continue;
       const [start] = bookingDateRange(b);
       if (!start) continue;
-      const startDate = new Date(`${start}T00:00:00`);
-      if (startDate >= today && startDate <= horizon) {
-        upcoming.push({ booking: b, start });
+      // Simple ISO string comparison works for YYYY-MM-DD.
+      if (start >= todayIso && start <= horizonIso) {
+        upcoming.push(b);
       }
     }
-    upcoming.sort((a, b) => a.start.localeCompare(b.start));
-    return upcoming.map((u) => u.booking);
+    upcoming.sort((a, b) => {
+      const [sa] = bookingDateRange(a);
+      const [sb] = bookingDateRange(b);
+      const dateCmp = sa.localeCompare(sb);
+      if (dateCmp !== 0) return dateCmp;
+      const ta = a.days?.[0]?.start_time ?? "99:99:99";
+      const tb = b.days?.[0]?.start_time ?? "99:99:99";
+      return ta.localeCompare(tb);
+    });
+    return upcoming;
   }, [bookingsQuery.data]);
 
   function viewBooking(b: Booking) {
@@ -86,6 +92,7 @@ export default function HomeScreen() {
   }
 
   return (
+    <View style={styles.root}>
     <FlatList
       style={styles.list}
       contentContainerStyle={styles.listContent}
@@ -117,50 +124,57 @@ export default function HomeScreen() {
             </Text>
           </LinearGradient>
 
-          {/* CTA: search vehicles available for a date range */}
+          {/* Full-width CTA: open the month calendar. */}
           <TouchableOpacity
             activeOpacity={0.85}
-            onPress={() => navigation.navigate("VehicleSearch")}
+            onPress={() => navigation.navigate("BookingCalendar")}
             style={styles.ctaCard}
           >
             <View style={styles.ctaIcon}>
-              <Text style={styles.ctaIconText}>⌕</Text>
+              <Text style={styles.ctaIconText}>📅</Text>
             </View>
             <View style={styles.ctaTextWrap}>
-              <Text style={styles.ctaTitle}>Find available vehicles</Text>
+              <Text style={styles.ctaTitle}>Calendar</Text>
               <Text style={styles.ctaSubtitle}>
-                Enter dates to see which vehicles are free, then book.
+                See every trip by day. Tap any date for details.
               </Text>
             </View>
             <Text style={styles.ctaChevron}>›</Text>
           </TouchableOpacity>
 
-          {/* Starting soon — bookings whose first day is within 7 days */}
-          {startingSoon.length > 0 ? (
-            <View style={styles.soonSection}>
-              <View style={styles.soonHeader}>
-                <Text style={styles.soonTitle}>Starting soon</Text>
-                <Text style={styles.soonCount}>
-                  {startingSoon.length} in the next 7 days
+          {/* Upcoming this week — one flat list, sorted by start date so the
+              operator reads it in the order trips will happen. Each row
+              carries a "Today" / "Tomorrow" / "in N days" label + the trip's
+              start time so today's jobs still stand out visually. */}
+          <View style={styles.soonSection}>
+            <View style={styles.soonHeader}>
+              <Text style={styles.soonTitle}>Upcoming this week</Text>
+              <Text style={styles.soonCount}>
+                {upcomingWeek.length}{" "}
+                {upcomingWeek.length === 1 ? "trip" : "trips"}
+              </Text>
+            </View>
+            {upcomingWeek.length === 0 ? (
+              <View style={styles.upcomingEmptyCard}>
+                <Text style={styles.upcomingEmptyText}>
+                  No trips in the next 7 days.
                 </Text>
               </View>
-              {startingSoon.map((b) => (
+            ) : (
+              upcomingWeek.map((b) => (
                 <SoonRow
                   key={b.id}
                   booking={b}
                   coverUrl={
-                    (b.car?.id != null
-                      ? coverById.get(b.car.id)
-                      : undefined) ??
                     b.car?.cover_photos?.find((p) => p.is_featured)
                       ?.cover_photos ??
                     b.car?.cover_photos?.[0]?.cover_photos
                   }
                   onPress={() => viewBooking(b)}
                 />
-              ))}
-            </View>
-          ) : null}
+              ))
+            )}
+          </View>
 
           {/* Status filter chips */}
           <View style={styles.filterRow}>
@@ -210,7 +224,6 @@ export default function HomeScreen() {
         <BookingRow
           booking={item}
           coverUrl={
-            (item.car?.id != null ? coverById.get(item.car.id) : undefined) ??
             item.car?.cover_photos?.find((p) => p.is_featured)?.cover_photos ??
             item.car?.cover_photos?.[0]?.cover_photos
           }
@@ -218,6 +231,13 @@ export default function HomeScreen() {
         />
       )}
     />
+    <FAB
+      icon="plus"
+      style={styles.fab}
+      color={colors.onPrimary}
+      onPress={() => navigation.navigate("NewBooking")}
+    />
+    </View>
   );
 }
 
@@ -230,6 +250,17 @@ function prettyDate(iso: string): string {
     month: "long",
     year: "numeric",
   });
+}
+
+// Format a Date's LOCAL year/month/day as YYYY-MM-DD. Can't use
+// toISOString().slice(0,10) — that returns UTC, so in SAST (UTC+2) new
+// Date() with hours=0 lands on YESTERDAY once serialised, which was why
+// the calendar screen wasn't rendering booking dots.
+function isoLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 // "2026-06-12" → "Today" / "Tomorrow" / "in 3 days" for the Starting Soon row.
@@ -298,6 +329,7 @@ function SoonRow({
           {dateLabel}
         </Text>
         <StatusPill status={booking.status} />
+        {booking.is_paid ? <PaidPill /> : null}
       </View>
     </TouchableOpacity>
   );
@@ -365,6 +397,7 @@ function BookingRow({
           </Text>
         ) : null}
         <StatusPill status={booking.status} />
+        {booking.is_paid ? <PaidPill /> : null}
       </View>
     </TouchableOpacity>
   );
@@ -377,6 +410,16 @@ function StatusPill({ status }: { status: string }) {
       <Text style={[styles.pillText, { color: tone.fg }]}>
         {status.toUpperCase()}
       </Text>
+    </View>
+  );
+}
+
+// Small emerald pill shown under the status pill when the client has paid
+// (either via Yoco webhook or a manual "Mark as paid" from BookingDetail).
+function PaidPill() {
+  return (
+    <View style={[styles.pill, styles.paidPill]}>
+      <Text style={[styles.pillText, styles.paidPillText]}>✓ PAID</Text>
     </View>
   );
 }
@@ -395,8 +438,15 @@ function statusTone(status: string): { bg: string; fg: string } {
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.background },
   list: { flex: 1, backgroundColor: colors.background },
-  listContent: { paddingBottom: 24 },
+  listContent: { paddingBottom: 96 },
+  fab: {
+    position: "absolute",
+    right: 16,
+    bottom: 16,
+    backgroundColor: colors.primary,
+  },
   hero: {
     paddingHorizontal: 20,
     paddingTop: 28,
@@ -454,6 +504,144 @@ const styles = StyleSheet.create({
   ctaTitle: { color: colors.heading, fontSize: 16, fontWeight: "700" },
   ctaSubtitle: { color: colors.muted, fontSize: 13, marginTop: 2 },
   ctaChevron: { color: colors.muted, fontSize: 28, marginLeft: 8 },
+
+  // Side-by-side quick-action tiles under the hero: search + calendar.
+  ctaRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: -16,
+    marginBottom: 14,
+  },
+  ctaTile: {
+    flex: 1,
+    padding: 14,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    alignItems: "flex-start",
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  ctaTileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  ctaTileIconText: {
+    color: colors.onPrimary,
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  ctaTileTitle: {
+    color: colors.heading,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  ctaTileSubtitle: {
+    color: colors.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+
+  // Today section — the operator's headline "don't forget these trips" card.
+  // Loud emerald border/background so it's the first thing the eye lands on.
+  todaySection: {
+    marginHorizontal: 16,
+    marginBottom: 20,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "#e7f3ec",
+    borderWidth: 2,
+    borderColor: colors.primary,
+  },
+  todayHeaderRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    paddingHorizontal: 2,
+  },
+  todayEyebrow: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 2,
+  },
+  todayHeaderDate: {
+    color: colors.heading,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  todayEmptyCard: {
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+  },
+  todayEmptyText: { color: colors.muted, fontSize: 13, fontWeight: "600" },
+  todayRow: {
+    flexDirection: "row",
+    padding: 12,
+    marginBottom: 8,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+  },
+  todayTime: {
+    width: 64,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+    paddingVertical: 4,
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+  },
+  todayTimeText: {
+    color: colors.onPrimary,
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  todayTimeEnd: {
+    color: colors.onPrimary,
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 2,
+    opacity: 0.85,
+  },
+  todayBody: { flex: 1, justifyContent: "center" },
+  todayCustomer: {
+    color: colors.heading,
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  todayMeta: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  todayPickup: {
+    color: colors.muted,
+    fontSize: 12,
+    marginTop: 3,
+  },
+
+  upcomingEmptyCard: {
+    padding: 20,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+  },
+  upcomingEmptyText: { color: colors.muted, fontSize: 13, fontWeight: "600" },
 
   soonSection: {
     marginHorizontal: 16,
@@ -597,4 +785,6 @@ const styles = StyleSheet.create({
   rowChevron: { color: colors.muted, fontSize: 24, marginLeft: 6 },
   pill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   pillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  paidPill: { backgroundColor: colors.primary },
+  paidPillText: { color: colors.onPrimary, fontSize: 9, letterSpacing: 1 },
 });
