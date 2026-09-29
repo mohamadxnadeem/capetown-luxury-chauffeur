@@ -1,8 +1,11 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Alert,
   ImageBackground,
+  KeyboardAvoidingView,
   Linking,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -15,12 +18,19 @@ import {
   Divider,
   Menu,
   Text,
+  TextInput,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAdminBooking, useDriverTrip, useUpdateBooking } from "@/hooks/useBookings";
+import {
+  useAdminBooking,
+  useBookingFormOptions,
+  useDriverTrip,
+  useUpdateBooking,
+} from "@/hooks/useBookings";
+import { useConvertBookingToGroup } from "@/hooks/useBookingGroups";
 import { useDrivers } from "@/hooks/useDrivers";
 import { useAuthStore } from "@/state/auth";
 import type { RootStackParamList } from "@/navigation/types";
@@ -28,7 +38,11 @@ import {
   bookingDateRange,
   type AccommodationSegment,
   type Booking,
+  type CreateBookingDayPayload,
+  type DriverNested,
+  type Vehicle,
 } from "@/api/types";
+import type { CreateBookingGroupChildPayload } from "@/api/bookingGroups";
 import { ShimmerImage } from "@/components/ShimmerImage";
 import { bookingDetailUrl, driverBookingPageUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
@@ -179,11 +193,14 @@ export default function BookingDetailScreen() {
   const error = adminQuery.error ?? driverQuery.error;
 
   const updateMutation = useUpdateBooking(booking?.id);
+  const convertMutation = useConvertBookingToGroup(booking?.id);
   const queryClient = useQueryClient();
 
   // Admin-only: full driver list for the quick-assign picker.
   const driversQuery = useDrivers();
   const [driverMenuOpen, setDriverMenuOpen] = useState(false);
+  const [addVehicleOpen, setAddVehicleOpen] = useState(false);
+  const formOptionsQuery = useBookingFormOptions();
 
   async function assignDriver(driverId: number | null) {
     setDriverMenuOpen(false);
@@ -639,6 +656,23 @@ export default function BookingDetailScreen() {
                   Mark as paid
                 </Button>
               ) : null}
+              {/* Standalone booking → offer to promote it to a group so
+                  the operator can attach a second vehicle. Hidden when
+                  the booking is already grouped. */}
+              {!booking.group_id ? (
+                <Button
+                  mode="outlined"
+                  onPress={() => setAddVehicleOpen(true)}
+                  disabled={convertMutation.isPending}
+                  style={styles.manageButton}
+                  contentStyle={styles.manageButtonContent}
+                  labelStyle={styles.manageLabel}
+                  textColor={colors.primary}
+                  icon="plus"
+                >
+                  Add another vehicle
+                </Button>
+              ) : null}
               <Button
                 mode="outlined"
                 onPress={() =>
@@ -675,7 +709,352 @@ export default function BookingDetailScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      {/* Add-another-vehicle sheet — promotes this standalone booking
+          into a new BookingGroup with the picked vehicle as sibling. */}
+      <AddVehicleSheet
+        visible={addVehicleOpen}
+        onClose={() => setAddVehicleOpen(false)}
+        primaryBooking={booking}
+        vehicles={formOptionsQuery.data?.vehicles ?? []}
+        drivers={formOptionsQuery.data?.drivers ?? []}
+        submitting={convertMutation.isPending}
+        onSubmit={async (child) => {
+          try {
+            const group = await convertMutation.mutateAsync({
+              additional_bookings: [child],
+            });
+            setAddVehicleOpen(false);
+            // Replace so back doesn't return to a booking that's now
+            // just one child of a group — the group is the new source
+            // of truth for this proposal.
+            navigation.replace("BookingGroupDetail", { groupId: group.id });
+          } catch (err: unknown) {
+            // Backend returns 400 with a helpful message when the
+            // booking is already grouped. Surface it directly.
+            Alert.alert("Couldn't add vehicle", formatApiError(err));
+          }
+        }}
+      />
     </>
+  );
+}
+
+// ---- Add-vehicle sheet --------------------------------------------------
+
+// A bottom-sheet-style modal that lets the operator pick a second vehicle
+// and a per-day rate; dates and times are inherited from the primary
+// booking so the operator doesn't need to redo the schedule.
+function AddVehicleSheet({
+  visible,
+  onClose,
+  primaryBooking,
+  vehicles,
+  drivers,
+  submitting,
+  onSubmit,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  primaryBooking: Booking;
+  vehicles: Vehicle[];
+  drivers: DriverNested[];
+  submitting: boolean;
+  onSubmit: (child: CreateBookingGroupChildPayload) => Promise<void>;
+}) {
+  const [vehicleId, setVehicleId] = useState<number | null>(null);
+  const [driverId, setDriverId] = useState<number | null>(null);
+  const [clientRate, setClientRate] = useState("");
+  const [driverRate, setDriverRate] = useState("");
+  const [pickupOverride, setPickupOverride] = useState("");
+  const [dropoffOverride, setDropoffOverride] = useState("");
+  const [notesOverride, setNotesOverride] = useState("");
+  const [vehicleMenuOpen, setVehicleMenuOpen] = useState(false);
+  const [driverMenuOpen, setDriverMenuOpen] = useState(false);
+
+  const primaryDays = primaryBooking.days ?? [];
+  const selectedVehicle = vehicles.find((v) => v.id === vehicleId);
+  const selectedDriver = drivers.find((d) => d.id === driverId);
+  const primaryVehicleId = primaryBooking.car?.id ?? null;
+  // Exclude the primary booking's vehicle so the operator can't
+  // accidentally pick the same one twice.
+  const availableVehicles = useMemo(
+    () =>
+      vehicles.filter(
+        (v) => v.is_active && v.id !== primaryVehicleId
+      ),
+    [vehicles, primaryVehicleId]
+  );
+
+  function reset() {
+    setVehicleId(null);
+    setDriverId(null);
+    setClientRate("");
+    setDriverRate("");
+    setPickupOverride("");
+    setDropoffOverride("");
+    setNotesOverride("");
+  }
+
+  function pickVehicle(v: Vehicle) {
+    setVehicleId(v.id);
+    // Prefill rates from vehicle defaults if the operator hasn't typed
+    // anything yet. Never overwrite operator input.
+    setClientRate((r) => (r ? r : v.price ?? ""));
+    setDriverRate((r) => (r ? r : v.driver?.default_daily_rate ?? ""));
+    // Prefill driver from vehicle default too, unless operator picked
+    // one explicitly.
+    setDriverId((cur) => (cur == null ? v.driver?.id ?? null : cur));
+    setVehicleMenuOpen(false);
+  }
+
+  async function handleConfirm() {
+    if (vehicleId == null) {
+      Alert.alert("Pick a vehicle first.");
+      return;
+    }
+    const clientRateNum = parseFloat(clientRate);
+    const driverRateNum = parseFloat(driverRate);
+    if (isNaN(clientRateNum) || clientRateNum <= 0) {
+      Alert.alert("Enter a valid client rate.");
+      return;
+    }
+    if (isNaN(driverRateNum) || driverRateNum < 0) {
+      Alert.alert("Enter a valid driver rate.");
+      return;
+    }
+    if (primaryDays.length === 0) {
+      Alert.alert(
+        "This booking has no scheduled days on it, so we can't derive dates for the second vehicle. Edit the primary booking first."
+      );
+      return;
+    }
+
+    // Expand each of the primary's days into a day row for the new
+    // vehicle. Times mirror the primary's — 95% of "two cars same
+    // tour" runs on the same schedule. Operator can tweak per-day
+    // after the group is created.
+    const days: CreateBookingDayPayload[] = primaryDays.map((d) => ({
+      date: d.date,
+      day_type: d.day_type,
+      start_time: d.start_time,
+      end_time: d.end_time,
+      notes: null,
+      client_rate: clientRateNum.toFixed(2),
+      driver_rate: driverRateNum.toFixed(2),
+      driver_payment_status: "unpaid",
+    }));
+
+    const child: CreateBookingGroupChildPayload = {
+      car: vehicleId,
+      driver: driverId,
+      pickup_location:
+        pickupOverride.trim() || primaryBooking.pickup_location || "",
+      dropoff_location:
+        dropoffOverride.trim() || primaryBooking.dropoff_location || "",
+      trip_description:
+        notesOverride.trim() || primaryBooking.trip_description || "",
+      days,
+    };
+
+    await onSubmit(child);
+    reset();
+  }
+
+  function handleClose() {
+    if (submitting) return;
+    onClose();
+    reset();
+  }
+
+  const dayCount = primaryDays.length;
+  const totalClient =
+    !isNaN(parseFloat(clientRate)) && dayCount > 0
+      ? parseFloat(clientRate) * dayCount
+      : 0;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={handleClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.sheetOverlay}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          style={styles.sheetBackdrop}
+          onPress={handleClose}
+        />
+        <View style={styles.sheet}>
+          <View style={styles.sheetHandle} />
+          <ScrollView contentContainerStyle={styles.sheetContent}>
+            <Text style={styles.sheetTitle}>Add another vehicle</Text>
+            <Text style={styles.sheetSub}>
+              This will bundle {primaryBooking.booking_reference} with a
+              second vehicle into a group proposal — one URL, one combined
+              total, one Yoco payment link.
+            </Text>
+
+            <Text style={styles.sheetLabel}>Vehicle</Text>
+            <Menu
+              visible={vehicleMenuOpen}
+              onDismiss={() => setVehicleMenuOpen(false)}
+              anchor={
+                <Button
+                  mode="outlined"
+                  onPress={() => setVehicleMenuOpen(true)}
+                  style={styles.sheetPicker}
+                  contentStyle={styles.sheetPickerContent}
+                  textColor={selectedVehicle ? colors.heading : colors.muted}
+                >
+                  {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
+                </Button>
+              }
+            >
+              {availableVehicles.length === 0 ? (
+                <Menu.Item title="No other vehicles available" disabled />
+              ) : (
+                availableVehicles.map((v) => (
+                  <Menu.Item
+                    key={v.id}
+                    onPress={() => pickVehicle(v)}
+                    title={v.title}
+                    leadingIcon={vehicleId === v.id ? "check" : undefined}
+                  />
+                ))
+              )}
+            </Menu>
+
+            <Text style={styles.sheetLabel}>Driver</Text>
+            <Menu
+              visible={driverMenuOpen}
+              onDismiss={() => setDriverMenuOpen(false)}
+              anchor={
+                <Button
+                  mode="outlined"
+                  onPress={() => setDriverMenuOpen(true)}
+                  style={styles.sheetPicker}
+                  contentStyle={styles.sheetPickerContent}
+                  textColor={selectedDriver ? colors.heading : colors.muted}
+                >
+                  {selectedDriver
+                    ? selectedDriver.full_name
+                    : "No driver assigned"}
+                </Button>
+              }
+            >
+              <Menu.Item
+                onPress={() => {
+                  setDriverId(null);
+                  setDriverMenuOpen(false);
+                }}
+                title="No driver assigned"
+                leadingIcon={driverId == null ? "check" : undefined}
+              />
+              {drivers.map((d) => (
+                <Menu.Item
+                  key={d.id}
+                  onPress={() => {
+                    setDriverId(d.id);
+                    setDriverMenuOpen(false);
+                  }}
+                  title={d.full_name}
+                  leadingIcon={driverId === d.id ? "check" : undefined}
+                />
+              ))}
+            </Menu>
+
+            <View style={styles.sheetRatesRow}>
+              <TextInput
+                label="Client rate (R / day)"
+                value={clientRate}
+                onChangeText={setClientRate}
+                mode="outlined"
+                keyboardType="decimal-pad"
+                style={styles.sheetRateInput}
+              />
+              <TextInput
+                label="Driver rate (R / day)"
+                value={driverRate}
+                onChangeText={setDriverRate}
+                mode="outlined"
+                keyboardType="decimal-pad"
+                style={styles.sheetRateInput}
+              />
+            </View>
+
+            {dayCount > 0 ? (
+              <Text style={styles.sheetHint}>
+                Uses the primary booking's {dayCount}{" "}
+                {dayCount === 1 ? "day" : "days"} and times.
+                {totalClient > 0
+                  ? `  Total for this vehicle: R ${totalClient.toFixed(2)}.`
+                  : ""}
+              </Text>
+            ) : (
+              <Text style={styles.sheetHint}>
+                ⚠ Primary booking has no scheduled days yet.
+              </Text>
+            )}
+
+            <TextInput
+              label="Pickup (optional override)"
+              value={pickupOverride}
+              onChangeText={setPickupOverride}
+              mode="outlined"
+              style={styles.sheetOverrideInput}
+              placeholder={primaryBooking.pickup_location || undefined}
+            />
+            <TextInput
+              label="Dropoff (optional override)"
+              value={dropoffOverride}
+              onChangeText={setDropoffOverride}
+              mode="outlined"
+              style={styles.sheetOverrideInput}
+              placeholder={primaryBooking.dropoff_location || undefined}
+            />
+            <TextInput
+              label="Notes for this vehicle (optional)"
+              value={notesOverride}
+              onChangeText={setNotesOverride}
+              mode="outlined"
+              multiline
+              numberOfLines={2}
+              style={styles.sheetOverrideInput}
+              placeholder="e.g. Second car for luggage / larger group"
+            />
+
+            <View style={styles.sheetActionsRow}>
+              <Button
+                mode="text"
+                onPress={handleClose}
+                disabled={submitting}
+                textColor={colors.muted}
+                style={styles.sheetActionButton}
+              >
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                onPress={handleConfirm}
+                loading={submitting}
+                disabled={submitting || vehicleId == null}
+                buttonColor={colors.primary}
+                textColor={colors.onPrimary}
+                style={styles.sheetActionButton}
+                icon="check"
+              >
+                Add to proposal
+              </Button>
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -1110,6 +1489,75 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   groupChipChevron: { color: colors.primary, fontSize: 22, marginLeft: 6 },
+
+  // Add-vehicle sheet
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  sheetBackdrop: { flex: 1 },
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "90%",
+    paddingTop: 8,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: "center",
+    marginBottom: 8,
+  },
+  sheetContent: { padding: 20, paddingBottom: 32 },
+  sheetTitle: {
+    color: colors.heading,
+    fontSize: 20,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  sheetSub: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 18,
+  },
+  sheetLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  sheetPicker: { borderRadius: 12, borderColor: colors.border },
+  sheetPickerContent: { height: 48, justifyContent: "flex-start" },
+  sheetRatesRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+  sheetRateInput: { flex: 1, backgroundColor: colors.surface },
+  sheetOverrideInput: {
+    marginTop: 8,
+    backgroundColor: colors.surface,
+  },
+  sheetHint: {
+    color: colors.muted,
+    fontSize: 12,
+    marginTop: 6,
+    fontStyle: "italic",
+  },
+  sheetActionsRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 20,
+    gap: 10,
+  },
+  sheetActionButton: { borderRadius: 12 },
 
   // Missing-reference warning banner.
   noRefBanner: {

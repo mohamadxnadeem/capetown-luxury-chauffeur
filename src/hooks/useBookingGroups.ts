@@ -3,6 +3,7 @@ import {
   addBookingToGroup,
   cancelBookingGroup,
   confirmBookingGroup,
+  convertBookingToGroup,
   createBookingGroup,
   fetchAdminBookingGroup,
   fetchAdminBookingGroups,
@@ -119,6 +120,41 @@ export function useConfirmBookingGroup(id: number | string | undefined) {
     onSuccess: (group: BookingGroup) => {
       qc.setQueryData(["admin", "booking-group", group.id], group);
       invalidateGroupCaches(qc, group.id);
+    },
+  });
+}
+
+// Promote an existing standalone booking into a new BookingGroup. On
+// success the caller navigates to the returned group's detail screen —
+// the standalone booking is now grouped and shouldn't be treated as a
+// standalone anywhere else. We also refresh the standalone booking's
+// detail cache so its group_id / group_reference update instantly if
+// the operator navigates back to it.
+export function useConvertBookingToGroup(
+  bookingId: number | string | undefined
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: {
+      title?: string;
+      notes?: string;
+      additional_bookings: Parameters<typeof convertBookingToGroup>[1]["additional_bookings"];
+    }) => {
+      if (bookingId == null) throw new Error("Booking id is required.");
+      return convertBookingToGroup(bookingId, args);
+    },
+    onSuccess: (group) => {
+      qc.setQueryData(["admin", "booking-group", group.id], group);
+      qc.invalidateQueries({ queryKey: ["admin", "booking-groups"] });
+      qc.invalidateQueries({ queryKey: ["admin", "bookings"] });
+      if (bookingId != null) {
+        qc.invalidateQueries({
+          queryKey: ["admin", "booking", bookingId],
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["admin", "vehicles-available"] });
+      qc.invalidateQueries({ queryKey: ["admin", "vehicle-unavailable-dates"] });
+      qc.invalidateQueries({ queryKey: ["admin", "vehicle-booked-slots"] });
     },
   });
 }

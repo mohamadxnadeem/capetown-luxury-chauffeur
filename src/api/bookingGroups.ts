@@ -7,6 +7,9 @@ import type {
   UpdateBookingGroupPayload,
 } from "./types";
 
+// Re-export so screens don't need to import from types directly.
+export type { CreateBookingGroupChildPayload };
+
 export async function fetchAdminBookingGroups(
   params?: BookingGroupListFilters
 ): Promise<BookingGroup[]> {
@@ -91,6 +94,27 @@ export async function cancelBookingGroup(
 ): Promise<BookingGroup> {
   const resp = await api.post<BookingGroup>(
     `/api/admin/booking-groups/${id}/cancel/`
+  );
+  return resp.data;
+}
+
+// Promote an EXISTING standalone booking into a new BookingGroup. The
+// existing booking becomes the first child; any additional_bookings
+// become further children (empty array is allowed and creates a
+// solo-child group the operator can extend via /add-booking/ later).
+// Backend inherits customer + status from the existing booking, so we
+// only send the group-level title/notes and any new children.
+export async function convertBookingToGroup(
+  bookingId: number | string,
+  args: {
+    title?: string;
+    notes?: string;
+    additional_bookings: CreateBookingGroupChildPayload[];
+  }
+): Promise<BookingGroup> {
+  const resp = await api.post<BookingGroup>(
+    `/api/admin/bookings/${bookingId}/convert-to-group/`,
+    args
   );
   return resp.data;
 }
