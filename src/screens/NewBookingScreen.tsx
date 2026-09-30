@@ -1024,7 +1024,11 @@ export default function NewBookingScreen() {
                   onDayPress={toggleDate}
                   theme={calendarTheme}
                   enableSwipeMonths
-                  minDate={new Date().toISOString().slice(0, 10)}
+                  // Intentionally no minDate — operator can back-date
+                  // bookings to record trips that weren't captured in
+                  // the app at the time. Availability marks still block
+                  // clashes on past dates the same way they do on
+                  // future ones.
                 />
               </View>
               {!form.noVehicle && unavailableQuery.isLoading ? (
