@@ -769,8 +769,11 @@ function AddVehicleSheet({
   const [pickupOverride, setPickupOverride] = useState("");
   const [dropoffOverride, setDropoffOverride] = useState("");
   const [notesOverride, setNotesOverride] = useState("");
-  const [vehicleMenuOpen, setVehicleMenuOpen] = useState(false);
-  const [driverMenuOpen, setDriverMenuOpen] = useState(false);
+  // Inline expand/collapse. React Native Paper Menu renders through a
+  // Portal that sits BELOW native Modals — tapping it did nothing. Inline
+  // lists render inside the modal itself so they behave predictably.
+  const [vehicleListOpen, setVehicleListOpen] = useState(false);
+  const [driverListOpen, setDriverListOpen] = useState(false);
 
   const primaryDays = primaryBooking.days ?? [];
   const selectedVehicle = vehicles.find((v) => v.id === vehicleId);
@@ -794,6 +797,8 @@ function AddVehicleSheet({
     setPickupOverride("");
     setDropoffOverride("");
     setNotesOverride("");
+    setVehicleListOpen(false);
+    setDriverListOpen(false);
   }
 
   function pickVehicle(v: Vehicle) {
@@ -805,7 +810,7 @@ function AddVehicleSheet({
     // Prefill driver from vehicle default too, unless operator picked
     // one explicitly.
     setDriverId((cur) => (cur == null ? v.driver?.id ?? null : cur));
-    setVehicleMenuOpen(false);
+    setVehicleListOpen(false);
   }
 
   async function handleConfirm() {
@@ -900,73 +905,136 @@ function AddVehicleSheet({
             </Text>
 
             <Text style={styles.sheetLabel}>Vehicle</Text>
-            <Menu
-              visible={vehicleMenuOpen}
-              onDismiss={() => setVehicleMenuOpen(false)}
-              anchor={
-                <Button
-                  mode="outlined"
-                  onPress={() => setVehicleMenuOpen(true)}
-                  style={styles.sheetPicker}
-                  contentStyle={styles.sheetPickerContent}
-                  textColor={selectedVehicle ? colors.heading : colors.muted}
-                >
-                  {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
-                </Button>
-              }
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setVehicleListOpen((v) => !v)}
+              style={styles.sheetPickerRow}
             >
-              {availableVehicles.length === 0 ? (
-                <Menu.Item title="No other vehicles available" disabled />
-              ) : (
-                availableVehicles.map((v) => (
-                  <Menu.Item
-                    key={v.id}
-                    onPress={() => pickVehicle(v)}
-                    title={v.title}
-                    leadingIcon={vehicleId === v.id ? "check" : undefined}
-                  />
-                ))
-              )}
-            </Menu>
+              <Text
+                style={[
+                  styles.sheetPickerRowText,
+                  !selectedVehicle && styles.sheetPickerRowTextMuted,
+                ]}
+              >
+                {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
+              </Text>
+              <Text style={styles.sheetPickerChevron}>
+                {vehicleListOpen ? "▴" : "▾"}
+              </Text>
+            </TouchableOpacity>
+            {vehicleListOpen ? (
+              <View style={styles.sheetInlineList}>
+                {availableVehicles.length === 0 ? (
+                  <Text style={styles.sheetInlineEmpty}>
+                    No other vehicles available.
+                  </Text>
+                ) : (
+                  availableVehicles.map((v) => {
+                    const active = vehicleId === v.id;
+                    return (
+                      <TouchableOpacity
+                        key={v.id}
+                        onPress={() => pickVehicle(v)}
+                        activeOpacity={0.85}
+                        style={[
+                          styles.sheetInlineOption,
+                          active && styles.sheetInlineOptionActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.sheetInlineOptionText,
+                            active && styles.sheetInlineOptionTextActive,
+                          ]}
+                        >
+                          {v.title}
+                        </Text>
+                        {active ? (
+                          <Text style={styles.sheetInlineOptionCheck}>✓</Text>
+                        ) : null}
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+            ) : null}
 
             <Text style={styles.sheetLabel}>Driver</Text>
-            <Menu
-              visible={driverMenuOpen}
-              onDismiss={() => setDriverMenuOpen(false)}
-              anchor={
-                <Button
-                  mode="outlined"
-                  onPress={() => setDriverMenuOpen(true)}
-                  style={styles.sheetPicker}
-                  contentStyle={styles.sheetPickerContent}
-                  textColor={selectedDriver ? colors.heading : colors.muted}
-                >
-                  {selectedDriver
-                    ? selectedDriver.full_name
-                    : "No driver assigned"}
-                </Button>
-              }
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setDriverListOpen((v) => !v)}
+              style={styles.sheetPickerRow}
             >
-              <Menu.Item
-                onPress={() => {
-                  setDriverId(null);
-                  setDriverMenuOpen(false);
-                }}
-                title="No driver assigned"
-                leadingIcon={driverId == null ? "check" : undefined}
-              />
-              {drivers.map((d) => (
-                <Menu.Item
-                  key={d.id}
+              <Text
+                style={[
+                  styles.sheetPickerRowText,
+                  !selectedDriver && styles.sheetPickerRowTextMuted,
+                ]}
+              >
+                {selectedDriver
+                  ? selectedDriver.full_name
+                  : "No driver assigned"}
+              </Text>
+              <Text style={styles.sheetPickerChevron}>
+                {driverListOpen ? "▴" : "▾"}
+              </Text>
+            </TouchableOpacity>
+            {driverListOpen ? (
+              <View style={styles.sheetInlineList}>
+                <TouchableOpacity
                   onPress={() => {
-                    setDriverId(d.id);
-                    setDriverMenuOpen(false);
+                    setDriverId(null);
+                    setDriverListOpen(false);
                   }}
-                  title={d.full_name}
-                  leadingIcon={driverId === d.id ? "check" : undefined}
-                />
-              ))}
-            </Menu>
+                  activeOpacity={0.85}
+                  style={[
+                    styles.sheetInlineOption,
+                    driverId == null && styles.sheetInlineOptionActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.sheetInlineOptionText,
+                      driverId == null && styles.sheetInlineOptionTextActive,
+                    ]}
+                  >
+                    No driver assigned
+                  </Text>
+                  {driverId == null ? (
+                    <Text style={styles.sheetInlineOptionCheck}>✓</Text>
+                  ) : null}
+                </TouchableOpacity>
+                {drivers.map((d) => {
+                  const active = driverId === d.id;
+                  return (
+                    <TouchableOpacity
+                      key={d.id}
+                      onPress={() => {
+                        setDriverId(d.id);
+                        setDriverListOpen(false);
+                      }}
+                      activeOpacity={0.85}
+                      style={[
+                        styles.sheetInlineOption,
+                        active && styles.sheetInlineOptionActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.sheetInlineOptionText,
+                          active && styles.sheetInlineOptionTextActive,
+                        ]}
+                      >
+                        {d.full_name}
+                      </Text>
+                      {active ? (
+                        <Text style={styles.sheetInlineOptionCheck}>✓</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
 
             <View style={styles.sheetRatesRow}>
               <TextInput
@@ -1535,6 +1603,66 @@ const styles = StyleSheet.create({
   },
   sheetPicker: { borderRadius: 12, borderColor: colors.border },
   sheetPickerContent: { height: 48, justifyContent: "flex-start" },
+  sheetPickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  sheetPickerRowText: {
+    color: colors.heading,
+    fontSize: 14,
+    fontWeight: "600",
+    flex: 1,
+  },
+  sheetPickerRowTextMuted: { color: colors.muted, fontWeight: "500" },
+  sheetPickerChevron: {
+    color: colors.muted,
+    fontSize: 14,
+    marginLeft: 10,
+  },
+  sheetInlineList: {
+    marginTop: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+    overflow: "hidden",
+  },
+  sheetInlineEmpty: {
+    padding: 12,
+    color: colors.muted,
+    fontSize: 13,
+    fontStyle: "italic",
+  },
+  sheetInlineOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  sheetInlineOptionActive: {
+    backgroundColor: "rgba(11,91,51,0.1)",
+  },
+  sheetInlineOptionText: {
+    color: colors.heading,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  sheetInlineOptionTextActive: { color: colors.primary, fontWeight: "800" },
+  sheetInlineOptionCheck: {
+    color: colors.primary,
+    fontSize: 16,
+    fontWeight: "800",
+  },
   sheetRatesRow: {
     flexDirection: "row",
     gap: 10,
