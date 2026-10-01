@@ -70,6 +70,13 @@ interface RetriableConfig extends AxiosRequestConfig {
 
 let refreshInflight: Promise<string | null> | null = null;
 
+// Exported so cold-start bootstrap can proactively refresh before the first
+// 401 ever happens. Keeps the operator logged in as long as they open the
+// app at least once before the refresh token's server-side TTL elapses.
+export async function proactiveRefresh(): Promise<string | null> {
+  return refreshAccessToken();
+}
+
 // Single-flight refresh — N concurrent 401s share ONE refresh call so the
 // rotated refresh token isn't blacklisted out from under us by parallel
 // refresh attempts.

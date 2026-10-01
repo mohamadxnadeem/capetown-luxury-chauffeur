@@ -26,7 +26,7 @@ import AdminTabs from "@/navigation/AdminTabs";
 import DriverTabs from "@/navigation/DriverTabs";
 import { useAuthStore } from "@/state/auth";
 import { detectRole } from "@/api/auth";
-import { setOnAuthFailure, tokenStorage } from "@/api/client";
+import { proactiveRefresh, setOnAuthFailure, tokenStorage } from "@/api/client";
 import {
   extractBookingFromNotification,
   extractConversationFromNotification,
@@ -45,6 +45,12 @@ export default function AppNavigator() {
   const navRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
 
   // On launch: if a refresh token exists, try to detect role and skip login.
+  // We also proactively refresh the token BEFORE the first API call so the
+  // backend rotates it to a fresh one. This keeps the operator logged in
+  // indefinitely as long as they open the app at least once per
+  // refresh-token-lifetime window (server-configured; Simple JWT default is
+  // 1 day). Without this, a day of inactivity → expired refresh token →
+  // kicked back to login on the next request.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -53,6 +59,12 @@ export default function AppNavigator() {
         signedOut();
         return;
       }
+      // Best-effort proactive refresh. If it fails because the refresh
+      // token already expired, we fall through to detectRole() which will
+      // 401, triggering the normal bail-to-login flow. If it succeeds, the
+      // next detectRole() call uses the fresh access token.
+      await proactiveRefresh();
+      if (cancelled) return;
       try {
         const { role: detected, driver } = await detectRole();
         if (!cancelled) signedIn(detected, driver);
