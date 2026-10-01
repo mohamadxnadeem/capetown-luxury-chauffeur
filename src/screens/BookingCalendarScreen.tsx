@@ -61,10 +61,23 @@ export default function BookingCalendarScreen() {
 
   // Bucket bookings by every date they touch. Ignore cancelled — the calendar
   // is about "what's the fleet doing on this day", not history.
+  //
+  // Correctness: a booking with days on the 1st and the 10th (but not 2-9)
+  // must only mark those two dates. We iterate the explicit days[] array
+  // when present. Only when the backend omits days[] (accommodation-only
+  // bookings don't have per-day rows) do we fall back to the full
+  // first→last range, since that's a continuous stay.
   const bookingsByDate = useMemo(() => {
     const map = new Map<string, Booking[]>();
     for (const b of bookingsQuery.data ?? []) {
       if (b.status === "cancelled") continue;
+      if (Array.isArray(b.days) && b.days.length > 0) {
+        for (const day of b.days) {
+          (map.get(day.date) ?? map.set(day.date, []).get(day.date)!).push(b);
+        }
+        continue;
+      }
+      // Accommodation-only: no per-day rows, treat the range as contiguous.
       const [start, end] = bookingDateRange(b);
       for (const d of datesInRange(start, end)) {
         (map.get(d) ?? map.set(d, []).get(d)!).push(b);
