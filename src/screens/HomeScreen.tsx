@@ -18,6 +18,17 @@ import type { RootStackParamList } from "@/navigation/types";
 
 type StatusFilter = "all" | BookingStatus;
 
+// One entry per upcoming scheduled day inside the next 7-day window. A
+// multi-day booking expands into one UpcomingDay per day — so a booking
+// with days Oct 1 & Oct 10 produces two separate rows, and marking the
+// first day as past doesn't hide the second.
+interface UpcomingDay {
+  booking: Booking;
+  dayDate: string; // YYYY-MM-DD, THIS specific day
+  startTime: string | null; // HH:MM:SS for this day
+  endTime: string | null;
+}
+
 const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "pending", label: "Pending" },
@@ -52,10 +63,26 @@ export default function HomeScreen() {
     });
   }, [bookingsQuery.data, filter]);
 
-  // Upcoming (non-cancelled, non-completed) bookings whose first day is
-  // between today and 7 days out. One flat list, sorted by start_date then
-  // start_time — the operator reads it top-to-bottom in the order trips
-  // will actually happen.
+  // Upcoming (non-cancelled, non-completed) bookings expanded ONE ROW PER
+  // UPCOMING DAY within the next 7-day window.
+  //
+  // Why per-day expansion instead of per-booking:
+  //   - A booking with days on Oct 1 and Oct 10, viewed on Oct 3:
+  //     the previous per-booking logic used bookingDateRange()[0] (= Oct 1)
+  //     and dropped the whole booking because its "start" was in the past.
+  //     Operator lost sight of the Oct 10 leg entirely.
+  //   - A booking with contiguous days Oct 1-5, viewed on Oct 3: same bug —
+  //     start = Oct 1 → excluded, so Oct 3/4/5 vanished even though they
+  //     were the actual next trips.
+  //
+  // New behavior: iterate every day of every active booking; include the
+  // (booking, day) pair if that specific day falls in the window. Each pair
+  // renders as its own SoonRow — a multi-day booking appears multiple times
+  // (one per upcoming day), each with that day's specific date and time.
+  //
+  // Fallback for accommodation-only bookings (no days[]): use the booking's
+  // start_date as the single trigger date, since those are continuous stays
+  // not per-day scheduled trips.
   const upcomingWeek = useMemo(() => {
     const all = bookingsQuery.data ?? [];
     const today = new Date();
@@ -65,23 +92,37 @@ export default function HomeScreen() {
     horizon.setDate(horizon.getDate() + 7);
     const horizonIso = isoLocal(horizon);
 
-    const upcoming: Booking[] = [];
+    const upcoming: UpcomingDay[] = [];
     for (const b of all) {
       if (b.status === "cancelled" || b.status === "completed") continue;
-      const [start] = bookingDateRange(b);
-      if (!start) continue;
-      // Simple ISO string comparison works for YYYY-MM-DD.
-      if (start >= todayIso && start <= horizonIso) {
-        upcoming.push(b);
+      if (Array.isArray(b.days) && b.days.length > 0) {
+        for (const d of b.days) {
+          if (d.date >= todayIso && d.date <= horizonIso) {
+            upcoming.push({
+              booking: b,
+              dayDate: d.date,
+              startTime: d.start_time,
+              endTime: d.end_time,
+            });
+          }
+        }
+      } else {
+        const [start] = bookingDateRange(b);
+        if (start && start >= todayIso && start <= horizonIso) {
+          upcoming.push({
+            booking: b,
+            dayDate: start,
+            startTime: null,
+            endTime: null,
+          });
+        }
       }
     }
     upcoming.sort((a, b) => {
-      const [sa] = bookingDateRange(a);
-      const [sb] = bookingDateRange(b);
-      const dateCmp = sa.localeCompare(sb);
+      const dateCmp = a.dayDate.localeCompare(b.dayDate);
       if (dateCmp !== 0) return dateCmp;
-      const ta = a.days?.[0]?.start_time ?? "99:99:99";
-      const tb = b.days?.[0]?.start_time ?? "99:99:99";
+      const ta = a.startTime ?? "99:99:99";
+      const tb = b.startTime ?? "99:99:99";
       return ta.localeCompare(tb);
     });
     return upcoming;
@@ -161,16 +202,18 @@ export default function HomeScreen() {
                 </Text>
               </View>
             ) : (
-              upcomingWeek.map((b) => (
+              upcomingWeek.map((entry) => (
                 <SoonRow
-                  key={b.id}
-                  booking={b}
+                  // Composite key — the same booking can appear multiple
+                  // times, one row per upcoming day.
+                  key={`${entry.booking.id}-${entry.dayDate}`}
+                  entry={entry}
                   coverUrl={
-                    b.car?.cover_photos?.find((p) => p.is_featured)
+                    entry.booking.car?.cover_photos?.find((p) => p.is_featured)
                       ?.cover_photos ??
-                    b.car?.cover_photos?.[0]?.cover_photos
+                    entry.booking.car?.cover_photos?.[0]?.cover_photos
                   }
-                  onPress={() => viewBooking(b)}
+                  onPress={() => viewBooking(entry.booking)}
                 />
               ))
             )}
@@ -278,25 +321,26 @@ function daysAwayLabel(iso: string): string {
 }
 
 function SoonRow({
-  booking,
+  entry,
   coverUrl,
   onPress,
 }: {
-  booking: Booking;
+  entry: UpcomingDay;
   coverUrl?: string;
   onPress: () => void;
 }) {
-  const [start, end] = bookingDateRange(booking);
-  const isMulti = start !== end && end !== "";
-  const dateLabel = isMulti
-    ? `${prettyDate(start)} → ${prettyDate(end)}`
-    : prettyDate(start);
-  const firstDay = booking.days?.[0];
-  const timeLabel = firstDay?.start_time
-    ? `${firstDay.start_time.slice(0, 5)}${
-        firstDay.end_time ? ` – ${firstDay.end_time.slice(0, 5)}` : ""
-      }`
+  const { booking, dayDate, startTime, endTime } = entry;
+  const timeLabel = startTime
+    ? `${startTime.slice(0, 5)}${endTime ? ` – ${endTime.slice(0, 5)}` : ""}`
     : null;
+  // When the booking spans multiple days, mark this row as "Day N of M"
+  // so the operator knows at a glance it's one leg of a longer trip, not
+  // a solo booking.
+  const totalDays = booking.days?.length ?? 1;
+  const dayIndex =
+    (booking.days?.findIndex((d) => d.date === dayDate) ?? -1) + 1;
+  const legLabel =
+    totalDays > 1 && dayIndex > 0 ? `Day ${dayIndex} of ${totalDays}` : null;
   return (
     <TouchableOpacity
       activeOpacity={0.85}
@@ -315,18 +359,19 @@ function SoonRow({
         }
       />
       <View style={styles.soonBody}>
-        <Text style={styles.soonWhen}>{daysAwayLabel(start)}</Text>
+        <Text style={styles.soonWhen}>{daysAwayLabel(dayDate)}</Text>
         <Text style={styles.soonCustomer} numberOfLines={1}>
           {booking.customer_name || `Booking #${booking.id}`}
         </Text>
         <Text style={styles.soonMeta} numberOfLines={1}>
           {booking.car?.title}
           {timeLabel ? `  ·  ${timeLabel}` : ""}
+          {legLabel ? `  ·  ${legLabel}` : ""}
         </Text>
       </View>
       <View style={styles.rowRight}>
         <Text style={styles.rowRightDate} numberOfLines={2}>
-          {dateLabel}
+          {prettyDate(dayDate)}
         </Text>
         <StatusPill status={booking.status} />
         {booking.is_paid ? <PaidPill /> : null}
