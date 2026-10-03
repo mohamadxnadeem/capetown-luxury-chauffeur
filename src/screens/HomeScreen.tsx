@@ -63,26 +63,24 @@ export default function HomeScreen() {
     });
   }, [bookingsQuery.data, filter]);
 
-  // Upcoming (non-cancelled, non-completed) bookings expanded ONE ROW PER
-  // UPCOMING DAY within the next 7-day window.
+  // Upcoming (non-cancelled, non-completed) bookings — ONE ROW PER BOOKING,
+  // anchored at that booking's NEXT upcoming day within the next 7-day
+  // window.
   //
-  // Why per-day expansion instead of per-booking:
-  //   - A booking with days on Oct 1 and Oct 10, viewed on Oct 3:
-  //     the previous per-booking logic used bookingDateRange()[0] (= Oct 1)
-  //     and dropped the whole booking because its "start" was in the past.
-  //     Operator lost sight of the Oct 10 leg entirely.
-  //   - A booking with contiguous days Oct 1-5, viewed on Oct 3: same bug —
-  //     start = Oct 1 → excluded, so Oct 3/4/5 vanished even though they
-  //     were the actual next trips.
+  // Design decisions:
+  //   - A 5-day job showing as 5 separate rows was noise; the operator
+  //     only needs to see "there's a trip coming up on day X" once per
+  //     booking.
+  //   - "Next upcoming day" = the earliest day of the booking that is
+  //     today or later. For a booking with days Oct 1-5 viewed on Oct 3,
+  //     the row shows Oct 3 (today). For gaps Oct 1 + Oct 10 viewed on
+  //     Oct 3, the row shows Oct 10 (Oct 1 is past).
+  //   - A booking whose only remaining days are past (or beyond the
+  //     7-day horizon) doesn't appear.
   //
-  // New behavior: iterate every day of every active booking; include the
-  // (booking, day) pair if that specific day falls in the window. Each pair
-  // renders as its own SoonRow — a multi-day booking appears multiple times
-  // (one per upcoming day), each with that day's specific date and time.
-  //
-  // Fallback for accommodation-only bookings (no days[]): use the booking's
-  // start_date as the single trigger date, since those are continuous stays
-  // not per-day scheduled trips.
+  // Fallback for accommodation-only bookings (no days[]): use the
+  // booking's start_date as the trigger date — those are continuous
+  // stays, not per-day scheduled trips.
   const upcomingWeek = useMemo(() => {
     const all = bookingsQuery.data ?? [];
     const today = new Date();
@@ -96,15 +94,23 @@ export default function HomeScreen() {
     for (const b of all) {
       if (b.status === "cancelled" || b.status === "completed") continue;
       if (Array.isArray(b.days) && b.days.length > 0) {
-        for (const d of b.days) {
-          if (d.date >= todayIso && d.date <= horizonIso) {
-            upcoming.push({
-              booking: b,
-              dayDate: d.date,
-              startTime: d.start_time,
-              endTime: d.end_time,
-            });
-          }
+        // Pick the earliest day >= today that's still inside the horizon.
+        // b.days usually comes back sorted by date already — sort locally
+        // just in case so this logic doesn't silently depend on backend
+        // ordering.
+        const sortedDays = [...b.days].sort((x, y) =>
+          x.date.localeCompare(y.date)
+        );
+        const next = sortedDays.find(
+          (d) => d.date >= todayIso && d.date <= horizonIso
+        );
+        if (next) {
+          upcoming.push({
+            booking: b,
+            dayDate: next.date,
+            startTime: next.start_time,
+            endTime: next.end_time,
+          });
         }
       } else {
         const [start] = bookingDateRange(b);
