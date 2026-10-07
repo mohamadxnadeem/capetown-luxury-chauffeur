@@ -203,6 +203,21 @@ function timeForApi(hhmm: string): string | null {
   return null;
 }
 
+// A shift is overnight when the end time is EARLIER than the start time —
+// e.g. 21:00 → 02:00 (9pm to 2am next morning). String comparison on
+// "HH:MM" is correct here because both are the same length and zero-padded.
+// Returns false if either side can't be parsed, so the backend's own
+// validation can speak up.
+function isOvernightShift(
+  startTime: string,
+  endTime: string
+): boolean {
+  const start = timeForApi(startTime);
+  const end = timeForApi(endTime);
+  if (!start || !end) return false;
+  return end < start;
+}
+
 // Build the editable form state from an existing booking (edit mode).
 function bookingToForm(b: Booking): FormState {
   const days = b.days ?? [];
@@ -705,11 +720,16 @@ export default function NewBookingScreen() {
       ? []
       : form.selectedDates.map((date) => {
           const detail = form.dayDetails[date] ?? newDayDetail();
+          const overnight = isOvernightShift(detail.startTime, detail.endTime);
           return {
             date,
             day_type: form.dayType,
             start_time: timeForApi(detail.startTime),
             end_time: timeForApi(detail.endTime),
+            // Auto-detected from the time values the operator typed — if
+            // end is earlier than start, we assume it crosses midnight.
+            // Backend requires this flag true for end<start to be valid.
+            end_next_day: overnight,
             notes: detail.notes.trim() || null,
             client_rate: parseFloat(detail.clientRate).toFixed(2),
             driver_rate: parseFloat(detail.driverRate).toFixed(2),
@@ -799,6 +819,10 @@ export default function NewBookingScreen() {
               day_type: form.dayType,
               start_time: timeForApi(primaryDetail.startTime),
               end_time: timeForApi(primaryDetail.endTime),
+              end_next_day: isOvernightShift(
+                primaryDetail.startTime,
+                primaryDetail.endTime
+              ),
               notes: null,
               client_rate: parseFloat(av.clientRatePerDay).toFixed(2),
               driver_rate: parseFloat(av.driverRatePerDay).toFixed(2),
@@ -1143,6 +1167,15 @@ export default function NewBookingScreen() {
                       autoCapitalize="none"
                     />
                   </View>
+                  {/* Auto-detected overnight indicator: when the operator
+                      types an end time earlier than the start, we treat
+                      the shift as crossing midnight. Shown so the operator
+                      can confirm the system understood the intent. */}
+                  {isOvernightShift(detail.startTime, detail.endTime) ? (
+                    <Text style={styles.overnightHint}>
+                      🌙 Overnight shift — ends the next morning
+                    </Text>
+                  ) : null}
                   <View style={styles.row}>
                     <TextInput
                       label="Client rate (R)"
@@ -1995,6 +2028,14 @@ const styles = StyleSheet.create({
     color: colors.partialText,
     fontSize: 13,
     fontWeight: "700",
+  },
+  overnightHint: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: -4,
+    marginBottom: 10,
+    paddingHorizontal: 2,
   },
   bookedSlotsHintSub: {
     color: colors.partialText,

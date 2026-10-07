@@ -119,13 +119,19 @@ export async function fetchVehicleUnavailableDates(
 }
 
 // A vehicle's booked time windows — used to show occupied slots when the
-// operator is picking times so they can find a free gap.
+// operator is picking times so they can find a free gap. The backend
+// includes "tail" slots for overnight shifts: when a booking on 2026-10-07
+// runs 21:00 → 02:00 (end_next_day), the response for 2026-10-08 contains
+// a slot {start_time: "00:00:00", end_time: "02:00:00",
+// from_previous_day_overnight: true} so the mobile knows that morning is
+// still occupied by the previous day's trip.
 export interface BookedSlot {
   date: string;
   start_time: string | null;
   end_time: string | null;
   booking_reference: string;
   status: string;
+  from_previous_day_overnight?: boolean;
 }
 
 export async function fetchVehicleBookedSlots(

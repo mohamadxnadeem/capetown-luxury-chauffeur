@@ -154,6 +154,13 @@ export interface BookingDay {
   day_type: DayType;
   start_time: string | null; // HH:MM:SS
   end_time: string | null;
+  // True when this day's shift crosses midnight — end_time is on the
+  // calendar day AFTER `date`. Example: date=2026-10-07,
+  // start_time=21:00, end_time=02:00, end_next_day=true represents a
+  // shift from 9pm Tue to 2am Wed. When end_next_day is true, the
+  // backend's availability check marks the next calendar day busy from
+  // 00:00 until end_time too.
+  end_next_day?: boolean;
   notes: string | null;
   client_rate?: string; // omitted on driver-view trips
   driver_rate: string;
@@ -261,6 +268,10 @@ export interface CreateBookingDayPayload {
   day_type: DayType;
   start_time?: string | null;
   end_time?: string | null;
+  // Set true when end_time falls on the day AFTER `date` (overnight
+  // shift). Backend requires end_time < start_time when this is true.
+  // Defaults to false server-side if omitted.
+  end_next_day?: boolean;
   notes?: string | null;
   client_rate: string;
   driver_rate: string;

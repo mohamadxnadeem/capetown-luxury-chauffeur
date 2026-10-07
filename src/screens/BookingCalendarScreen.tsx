@@ -67,20 +67,36 @@ export default function BookingCalendarScreen() {
   // when present. Only when the backend omits days[] (accommodation-only
   // bookings don't have per-day rows) do we fall back to the full
   // first→last range, since that's a continuous stay.
+  //
+  // Overnight shifts: a day with end_next_day=true also occupies the
+  // following calendar day until end_time, so we drop a dot on BOTH
+  // dates. The booking only has ONE day row (the start date), but the
+  // vehicle is still on the road the next morning.
   const bookingsByDate = useMemo(() => {
     const map = new Map<string, Booking[]>();
+    const push = (date: string, b: Booking) => {
+      (map.get(date) ?? map.set(date, []).get(date)!).push(b);
+    };
     for (const b of bookingsQuery.data ?? []) {
       if (b.status === "cancelled") continue;
       if (Array.isArray(b.days) && b.days.length > 0) {
         for (const day of b.days) {
-          (map.get(day.date) ?? map.set(day.date, []).get(day.date)!).push(b);
+          push(day.date, b);
+          if (day.end_next_day) {
+            // Add the next calendar day so the morning tail shows on the
+            // calendar. Compute via a local Date to handle month/year
+            // rollover cleanly.
+            const d = new Date(`${day.date}T00:00:00`);
+            d.setDate(d.getDate() + 1);
+            push(isoLocal(d), b);
+          }
         }
         continue;
       }
       // Accommodation-only: no per-day rows, treat the range as contiguous.
       const [start, end] = bookingDateRange(b);
       for (const d of datesInRange(start, end)) {
-        (map.get(d) ?? map.set(d, []).get(d)!).push(b);
+        push(d, b);
       }
     }
     return map;

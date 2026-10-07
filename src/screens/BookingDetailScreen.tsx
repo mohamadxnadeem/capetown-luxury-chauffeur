@@ -594,11 +594,19 @@ export default function BookingDetailScreen() {
                       <Text style={styles.dayBulletText}>{i + 1}</Text>
                     </View>
                     <Text style={styles.dayDate}>{d.date}</Text>
+                    {d.end_next_day ? (
+                      <Text style={styles.overnightBadge}>🌙 OVERNIGHT</Text>
+                    ) : null}
                   </View>
                   <DayScheduleBar
                     startTime={d.start_time}
                     endTime={d.end_time}
                   />
+                  {d.end_next_day ? (
+                    <Text style={styles.dayOvernight}>
+                      Ends {d.end_time?.slice(0, 5) ?? ""} the next morning
+                    </Text>
+                  ) : null}
                   {d.notes ? (
                     <Text style={styles.dayNote}>{d.notes}</Text>
                   ) : null}
@@ -838,12 +846,15 @@ function AddVehicleSheet({
     // Expand each of the primary's days into a day row for the new
     // vehicle. Times mirror the primary's — 95% of "two cars same
     // tour" runs on the same schedule. Operator can tweak per-day
-    // after the group is created.
+    // after the group is created. Carry through end_next_day so an
+    // overnight primary shift (e.g. 21:00 → 02:00) stays overnight on
+    // the second vehicle.
     const days: CreateBookingDayPayload[] = primaryDays.map((d) => ({
       date: d.date,
       day_type: d.day_type,
       start_time: d.start_time,
       end_time: d.end_time,
+      end_next_day: !!d.end_next_day,
       notes: null,
       client_rate: clientRateNum.toFixed(2),
       driver_rate: driverRateNum.toFixed(2),
@@ -1480,6 +1491,23 @@ const styles = StyleSheet.create({
   dayBulletText: { color: colors.primary, fontWeight: "800", fontSize: 12 },
   dayDate: { color: colors.heading, fontWeight: "700", fontSize: 15 },
   dayNote: { color: colors.text, fontSize: 13, marginTop: 8, fontStyle: "italic" },
+  overnightBadge: {
+    marginLeft: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "rgba(11,91,51,0.1)",
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  dayOvernight: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 6,
+  },
 
   // Status switcher
   statusRow: { flexDirection: "row", gap: 8, marginBottom: 8 },
