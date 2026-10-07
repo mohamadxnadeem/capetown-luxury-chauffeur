@@ -38,6 +38,7 @@ import {
   bookingDateRange,
   type AccommodationSegment,
   type Booking,
+  type BookingDay,
   type CreateBookingDayPayload,
   type DriverNested,
   type Vehicle,
@@ -53,6 +54,82 @@ import { colors } from "@/theme";
 
 function digitsOnly(phone: string | null | undefined): string {
   return (phone ?? "").replace(/\D+/g, "");
+}
+
+// "2026-10-07" → "2026-10-08". Via a local Date so month/year rollover works.
+function addOneIsoDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// A row in the schedule view. Can be:
+//   - A real day row (`day` populated, no tail) — standard shift.
+//   - A real day row carrying an overnight tail from the PREVIOUS day
+//     (`day` populated AND `tailEndTime` set) — rare, happens when the
+//     operator has back-to-back days where day N is overnight into day N+1
+//     which is itself a scheduled day.
+//   - A synthetic tail-only row (`day` null, `tailEndTime` + `tailFromDate`
+//     set) — happens when day N is overnight but day N+1 is NOT a scheduled
+//     day of this booking. We render the tail on its own date so the
+//     operator sees the vehicle isn't fully free until the tail finishes.
+interface ScheduleRow {
+  date: string;
+  // The booking's actual day row for this date, or null when this row
+  // is a synthetic tail-only entry (previous day's overnight ends here
+  // but this date isn't itself a scheduled day).
+  day: BookingDay | null;
+  // When set, means a previous day's end_next_day shift ends at this
+  // time on this date. Used to render the morning tail block in
+  // DayScheduleBar.
+  tailEndTime: string | null;
+  // Date the tail originated from (previous day's date), shown in the
+  // "Carrying over from …" caption.
+  tailFromDate: string | null;
+}
+
+// Walk the booking's days[] and build a date-sorted list of schedule rows,
+// injecting synthetic tail rows into the next date whenever a day has
+// end_next_day=true. If the next date already has its own day row, the
+// tail is attached to that row (the DayScheduleBar renders both the tail
+// and the day's own shift).
+function buildScheduleRows(days: BookingDay[]): ScheduleRow[] {
+  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  // Map so a date touched twice (synthetic tail row later promoted to
+  // a real day row, or vice versa) still ends up as a single entry.
+  const rows = new Map<string, ScheduleRow>();
+  for (const d of sorted) {
+    const existing = rows.get(d.date);
+    if (existing) {
+      existing.day = d;
+    } else {
+      rows.set(d.date, {
+        date: d.date,
+        day: d,
+        tailEndTime: null,
+        tailFromDate: null,
+      });
+    }
+    if (d.end_next_day && d.end_time) {
+      const nextDate = addOneIsoDay(d.date);
+      const next = rows.get(nextDate);
+      if (next) {
+        next.tailEndTime = d.end_time;
+        next.tailFromDate = d.date;
+      } else {
+        rows.set(nextDate, {
+          date: nextDate,
+          day: null,
+          tailEndTime: d.end_time,
+          tailFromDate: d.date,
+        });
+      }
+    }
+  }
+  return [...rows.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function clientMessage(b: Booking): string {
@@ -584,31 +661,41 @@ export default function BookingDetailScreen() {
           <Card style={styles.card} mode="elevated">
             <Card.Content>
               <SectionLabel>Schedule</SectionLabel>
-              {days.map((d, i) => (
+              {buildScheduleRows(days).map((row, i) => (
                 <View
-                  key={d.id}
+                  key={row.date}
                   style={[styles.dayBlock, i === 0 && styles.dayBlockFirst]}
                 >
                   <View style={styles.dayBlockHeader}>
                     <View style={styles.dayBullet}>
                       <Text style={styles.dayBulletText}>{i + 1}</Text>
                     </View>
-                    <Text style={styles.dayDate}>{d.date}</Text>
-                    {d.end_next_day ? (
+                    <Text style={styles.dayDate}>{row.date}</Text>
+                    {row.day?.end_next_day ? (
                       <Text style={styles.overnightBadge}>🌙 OVERNIGHT</Text>
+                    ) : null}
+                    {row.tailFromDate && !row.day ? (
+                      <Text style={styles.overnightBadge}>🌙 TAIL</Text>
                     ) : null}
                   </View>
                   <DayScheduleBar
-                    startTime={d.start_time}
-                    endTime={d.end_time}
+                    startTime={row.day?.start_time ?? null}
+                    endTime={row.day?.end_time ?? null}
+                    endNextDay={!!row.day?.end_next_day}
+                    morningTailEndTime={row.tailEndTime ?? null}
                   />
-                  {d.end_next_day ? (
+                  {row.day?.end_next_day ? (
                     <Text style={styles.dayOvernight}>
-                      Ends {d.end_time?.slice(0, 5) ?? ""} the next morning
+                      Continues to {row.day?.end_time?.slice(0, 5) ?? ""} on {addOneIsoDay(row.date)}
                     </Text>
                   ) : null}
-                  {d.notes ? (
-                    <Text style={styles.dayNote}>{d.notes}</Text>
+                  {row.tailFromDate ? (
+                    <Text style={styles.dayOvernight}>
+                      ← Carrying over from {row.tailFromDate} until {row.tailEndTime?.slice(0, 5) ?? ""}
+                    </Text>
+                  ) : null}
+                  {row.day?.notes ? (
+                    <Text style={styles.dayNote}>{row.day.notes}</Text>
                   ) : null}
                 </View>
               ))}
