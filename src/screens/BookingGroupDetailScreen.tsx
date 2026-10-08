@@ -20,11 +20,13 @@ import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Clipboard from "expo-clipboard";
 import {
+  useAddBookingToGroup,
   useAdminBookingGroup,
   useCancelBookingGroup,
   useConfirmBookingGroup,
   useRemoveBookingFromGroup,
 } from "@/hooks/useBookingGroups";
+import { useBookingFormOptions } from "@/hooks/useBookings";
 import {
   bookingDateRange,
   type Booking,
@@ -32,6 +34,7 @@ import {
 } from "@/api/types";
 import { bookingGroupProposalUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
+import { AddVehicleSheet } from "@/components/AddVehicleSheet";
 import type { RootStackParamList } from "@/navigation/types";
 import { colors } from "@/theme";
 
@@ -112,8 +115,11 @@ export default function BookingGroupDetailScreen() {
   const confirmMutation = useConfirmBookingGroup(groupId);
   const cancelMutation = useCancelBookingGroup(groupId);
   const removeMutation = useRemoveBookingFromGroup(groupId);
+  const addBookingMutation = useAddBookingToGroup(groupId);
+  const formOptionsQuery = useBookingFormOptions();
 
   const [busy, setBusy] = useState(false);
+  const [addVehicleOpen, setAddVehicleOpen] = useState(false);
 
   if (groupQuery.isLoading) {
     return (
@@ -298,7 +304,20 @@ export default function BookingGroupDetailScreen() {
       {/* Child bookings */}
       <Card style={styles.card} mode="elevated">
         <Card.Content>
-          <SectionLabel>Bookings in this group</SectionLabel>
+          <View style={styles.bookingsHeader}>
+            <SectionLabel>Bookings in this group</SectionLabel>
+            {!isCancelled ? (
+              <Button
+                compact
+                onPress={() => setAddVehicleOpen(true)}
+                icon="plus"
+                textColor={colors.primary}
+                disabled={addBookingMutation.isPending}
+              >
+                Add vehicle
+              </Button>
+            ) : null}
+          </View>
           {group.bookings.map((b, i) => (
             <ChildBookingRow
               key={b.id}
@@ -358,6 +377,38 @@ export default function BookingGroupDetailScreen() {
           </Text>
         </View>
       )}
+
+      {/* Add-vehicle sheet — attaches a new child booking to this group
+          via /booking-groups/<id>/add-booking/. Pre-fills with the first
+          child's dates/times/pickup as a convenient default, which the
+          operator can override to use different dates per vehicle. */}
+      <AddVehicleSheet
+        visible={addVehicleOpen}
+        onClose={() => setAddVehicleOpen(false)}
+        defaultDates={(group.bookings[0]?.days ?? []).map((d) => d.date)}
+        defaultDayType={group.bookings[0]?.days?.[0]?.day_type ?? "full_day"}
+        defaultStartTime={group.bookings[0]?.days?.[0]?.start_time ?? null}
+        defaultEndTime={group.bookings[0]?.days?.[0]?.end_time ?? null}
+        defaultPickupLocation={group.bookings[0]?.pickup_location}
+        defaultDropoffLocation={group.bookings[0]?.dropoff_location}
+        excludeVehicleIds={group.bookings
+          .map((b) => b.car?.id)
+          .filter((id): id is number => id != null)}
+        vehicles={formOptionsQuery.data?.vehicles ?? []}
+        drivers={formOptionsQuery.data?.drivers ?? []}
+        submitting={addBookingMutation.isPending}
+        heading="Add vehicle to this proposal"
+        description={`${group.group_reference} — this adds another vehicle to the group. Combined total and payment link update automatically.`}
+        submitLabel="Add vehicle"
+        onSubmit={async (child) => {
+          try {
+            await addBookingMutation.mutateAsync(child);
+            setAddVehicleOpen(false);
+          } catch (err: unknown) {
+            Alert.alert("Couldn't add vehicle", formatApiError(err));
+          }
+        }}
+      />
     </ScrollView>
   );
 }
@@ -617,6 +668,11 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   divider: { backgroundColor: colors.border, marginVertical: 14 },
+  bookingsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   row: { flexDirection: "row", marginVertical: 3 },
   rowLabel: {
     width: 96,
