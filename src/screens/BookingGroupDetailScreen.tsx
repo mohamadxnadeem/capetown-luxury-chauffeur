@@ -50,7 +50,7 @@ function proposalMessage(g: BookingGroup): string {
   return [
     `Hi ${g.customer_name || "there"},`,
     "",
-    g.title || "Your Cape Town Concierge proposal is ready.",
+    g.title || "Your Cape Town Concierge booking confirmation.",
     "",
     vehicleCount > 0
       ? `🚗 ${vehicleCount} ${vehicleCount === 1 ? "vehicle" : "vehicles"}`
@@ -145,7 +145,7 @@ export default function BookingGroupDetailScreen() {
 
   async function handleConfirm() {
     Alert.alert(
-      "Confirm this proposal?",
+      "Confirm this booking?",
       "This flips every vehicle in the group to confirmed and generates one Yoco payment link for the whole amount.",
       [
         { text: "Not yet", style: "cancel" },
@@ -227,7 +227,7 @@ export default function BookingGroupDetailScreen() {
 
   async function handleCopyUrl() {
     await Clipboard.setStringAsync(proposalUrl);
-    Alert.alert("Copied", "Proposal link copied to your clipboard.");
+    Alert.alert("Copied", "Booking link copied to your clipboard.");
   }
 
   return (
@@ -239,7 +239,7 @@ export default function BookingGroupDetailScreen() {
         <View style={styles.actionsRow}>
           <ActionButton
             icon="share-variant"
-            label="Share proposal"
+            label="Share booking"
             onPress={handleShareProposal}
           />
           <ActionButton
@@ -286,7 +286,7 @@ export default function BookingGroupDetailScreen() {
 
           <Divider style={styles.divider} />
 
-          <SectionLabel>Proposal</SectionLabel>
+          <SectionLabel>Booking</SectionLabel>
           <Row label="Title" value={group.title} />
           <Row
             label="Total"
@@ -352,7 +352,7 @@ export default function BookingGroupDetailScreen() {
                 labelStyle={styles.manageLabel}
                 icon="check-circle-outline"
               >
-                Confirm proposal (generate payment link)
+                Confirm booking (generate payment link)
               </Button>
             ) : null}
             <Button
@@ -397,8 +397,8 @@ export default function BookingGroupDetailScreen() {
         vehicles={formOptionsQuery.data?.vehicles ?? []}
         drivers={formOptionsQuery.data?.drivers ?? []}
         submitting={addBookingMutation.isPending}
-        heading="Add vehicle to this proposal"
-        description={`${group.group_reference} — this adds another vehicle to the group. Combined total and payment link update automatically.`}
+        heading="Add vehicle to this booking"
+        description={`${group.group_reference} — this adds another vehicle to the booking. Combined total and payment link update automatically.`}
         submitLabel="Add vehicle"
         onSubmit={async (child) => {
           try {
@@ -447,7 +447,7 @@ function Hero({ group }: { group: BookingGroup }) {
           </View>
         </View>
         <Text style={styles.heroTitle}>
-          {group.title || `${group.bookings.length}-vehicle proposal`}
+          {group.title || `Trip for ${group.customer_name || "client"}`}
         </Text>
         {dateLabel ? <Text style={styles.heroDates}>{dateLabel}</Text> : null}
         <Text style={styles.heroTotal}>

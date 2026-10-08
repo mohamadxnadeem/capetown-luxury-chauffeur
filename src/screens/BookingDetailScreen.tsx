@@ -435,7 +435,7 @@ export default function BookingDetailScreen() {
           >
             <Text style={styles.groupChipIcon}>↔</Text>
             <View style={styles.groupChipBody}>
-              <Text style={styles.groupChipTitle}>Part of a group proposal</Text>
+              <Text style={styles.groupChipTitle}>Part of a group booking</Text>
               <Text style={styles.groupChipRef}>
                 {booking.group_reference}
               </Text>
@@ -838,7 +838,7 @@ export default function BookingDetailScreen() {
         vehicles={formOptionsQuery.data?.vehicles ?? []}
         drivers={formOptionsQuery.data?.drivers ?? []}
         submitting={convertMutation.isPending}
-        description={`This will bundle ${booking.booking_reference} with a second vehicle into a group proposal — one URL, one combined total, one Yoco payment link.`}
+        description={`This will bundle ${booking.booking_reference} with a second vehicle into a group booking — one URL, one combined total, one Yoco payment link for the client.`}
         onSubmit={async (child) => {
           try {
             const group = await convertMutation.mutateAsync({

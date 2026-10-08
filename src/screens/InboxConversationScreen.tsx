@@ -55,7 +55,7 @@ function actionKindLabel(kind: string): string {
     case "draft_booking":
       return "Draft booking";
     case "draft_booking_group":
-      return "Draft group proposal";
+      return "Draft group booking";
     case "escalate":
       return "Escalation";
     default:

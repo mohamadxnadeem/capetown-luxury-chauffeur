@@ -200,7 +200,7 @@ export default function AppNavigator() {
             <Stack.Screen
               name="BookingGroupDetail"
               component={BookingGroupDetailScreen}
-              options={{ title: "Proposal" }}
+              options={{ title: "Group booking" }}
             />
             <Stack.Screen
               name="InboxConversation"

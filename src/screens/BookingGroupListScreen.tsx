@@ -112,13 +112,13 @@ export default function BookingGroupListScreen() {
               style={styles.hero}
             >
               <Text style={styles.heroEyebrow}>CAPE TOWN CONCIERGE</Text>
-              <Text style={styles.heroTitle}>Group proposals</Text>
+              <Text style={styles.heroTitle}>Multi-vehicle bookings</Text>
               <Text style={styles.heroSubtitle}>
                 {groupsQuery.isLoading
                   ? "Loading…"
                   : `${groups.length} ${
                       filter === "all" ? "total" : filter
-                    } proposal${groups.length === 1 ? "" : "s"}`}
+                    } booking${groups.length === 1 ? "" : "s"}`}
               </Text>
             </LinearGradient>
 
@@ -158,15 +158,15 @@ export default function BookingGroupListScreen() {
           ) : groupsQuery.error ? (
             <View style={styles.empty}>
               <Text style={styles.emptyText}>
-                Couldn't load proposals.
+                Couldn't load bookings.
               </Text>
             </View>
           ) : (
             <View style={styles.empty}>
               <Text style={styles.emptyText}>
                 {filter === "all"
-                  ? "No multi-vehicle proposals yet."
-                  : `No ${filter} proposals.`}
+                  ? "No multi-vehicle bookings yet."
+                  : `No ${filter} bookings.`}
               </Text>
               <Text style={styles.emptyHint}>
                 Build one from any booking's "+ Add another vehicle" button.
@@ -218,7 +218,7 @@ function GroupRow({
           {group.group_reference}
         </Text>
         <Text style={styles.rowTitle} numberOfLines={1}>
-          {group.title || `Proposal for ${group.customer_name || "client"}`}
+          {group.title || `Trip for ${group.customer_name || "client"}`}
         </Text>
         <Text style={styles.rowMeta} numberOfLines={1}>
           {group.customer_name}

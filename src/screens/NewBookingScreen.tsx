@@ -834,7 +834,7 @@ export default function NewBookingScreen() {
       const groupPayload: CreateBookingGroupPayload = {
         title:
           form.proposalTitle.trim() ||
-          `${1 + form.additionalVehicles.length}-vehicle proposal for ${form.customerName.trim()}`,
+          `Trip for ${form.customerName.trim()}`,
         customer_name: form.customerName.trim(),
         customer_email: form.customerEmail.trim(),
         customer_phone: form.customerPhone.trim(),
@@ -846,8 +846,8 @@ export default function NewBookingScreen() {
         const group =
           await createBookingGroupMutation.mutateAsync(groupPayload);
         Alert.alert(
-          "Proposal created",
-          `${group.group_reference} — ${group.bookings.length} vehicles bundled.`,
+          "Booking created",
+          `${group.group_reference} — ${group.bookings.length} vehicles.`,
           [
             {
               text: "View",
@@ -864,7 +864,7 @@ export default function NewBookingScreen() {
           ]
         );
       } catch (err: unknown) {
-        Alert.alert("Couldn't create proposal", formatApiError(err));
+        Alert.alert("Couldn't create booking", formatApiError(err));
       }
       return;
     }
@@ -1358,7 +1358,7 @@ export default function NewBookingScreen() {
             ) : (
               <>
                 <TextInput
-                  label="Proposal title (optional)"
+                  label="Booking title (optional)"
                   value={form.proposalTitle}
                   onChangeText={(v) =>
                     setForm((f) => ({ ...f, proposalTitle: v }))
