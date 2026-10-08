@@ -4,7 +4,7 @@ import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import FinanceScreen from "@/screens/FinanceScreen";
 import HomeScreen from "@/screens/HomeScreen";
 import InboxListScreen from "@/screens/InboxListScreen";
-import PackageListScreen from "@/screens/PackageListScreen";
+import BookingGroupListScreen from "@/screens/BookingGroupListScreen";
 import ProfileScreen from "@/screens/ProfileScreen";
 import VehicleListScreen from "@/screens/VehicleListScreen";
 import AccommodationScreen from "@/screens/AccommodationScreen";
@@ -94,10 +94,14 @@ export default function AdminTabs() {
         }}
       />
       <Tab.Screen
-        name="Packages"
-        component={PackageListScreen}
+        name="Groups"
+        component={BookingGroupListScreen}
         options={{
-          tabBarIcon: tabIcon("gift", "gift-outline"),
+          headerShown: false,
+          tabBarIcon: tabIcon(
+            "format-list-bulleted-type",
+            "format-list-bulleted"
+          ),
         }}
       />
       <Tab.Screen

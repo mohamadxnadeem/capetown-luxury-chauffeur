@@ -22,6 +22,7 @@ import VillaEditScreen from "@/screens/VillaEditScreen";
 import HotelDetailScreen from "@/screens/HotelDetailScreen";
 import HotelEditScreen from "@/screens/HotelEditScreen";
 import PackageEditScreen from "@/screens/PackageEditScreen";
+import PackageListScreen from "@/screens/PackageListScreen";
 import AdminTabs from "@/navigation/AdminTabs";
 import DriverTabs from "@/navigation/DriverTabs";
 import { useAuthStore } from "@/state/auth";
@@ -235,6 +236,11 @@ export default function AppNavigator() {
               name="HotelEdit"
               component={HotelEditScreen}
               options={{ title: "Edit Hotel" }}
+            />
+            <Stack.Screen
+              name="PackageList"
+              component={PackageListScreen}
+              options={{ title: "Packages" }}
             />
             <Stack.Screen
               name="PackageEdit"

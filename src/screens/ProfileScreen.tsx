@@ -73,6 +73,25 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       ) : null}
 
+      {role === "admin" ? (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate("PackageList")}
+          style={styles.navRow}
+        >
+          <View style={styles.navIcon}>
+            <Text style={styles.navIconText}>🎁</Text>
+          </View>
+          <View style={styles.navBody}>
+            <Text style={styles.navTitle}>Packages</Text>
+            <Text style={styles.navSubtitle}>
+              Manage pre-built tour packages
+            </Text>
+          </View>
+          <Text style={styles.navChevron}>›</Text>
+        </TouchableOpacity>
+      ) : null}
+
       {role === "admin" ? <CalendarFeedCard /> : null}
 
       <Button

@@ -8,10 +8,10 @@ export type AdminTabsParamList = {
   // Combined Villas + Hotels tab with a top toggle. Kept as narrow as
   // possible to stay comfortable on small phones.
   Accommodation: undefined;
-  // Packages tab replaced the old "New" booking tab — booking creation now
-  // lives in the stack (NewBooking) and is reached via the Home FAB or from
-  // the VehicleSearch / VehicleDetail "Book" buttons.
-  Packages: undefined;
+  // Groups tab — list of multi-vehicle proposal groups (CTC-GRP-*).
+  // Replaced the Packages tab (which was less used); Packages are still
+  // reachable from the Profile tab's navigation rows.
+  Groups: undefined;
   Profile: undefined;
 };
 
@@ -48,8 +48,10 @@ export type RootStackParamList = {
   HotelList: undefined;
   HotelDetail: { hotelId: number };
   HotelEdit: { hotelId?: number };
-  // Package management. List opens from the Packages tab; edit covers
-  // both create and edit modes.
+  // Package management. The list is reached from the Profile tab's
+  // navigation rows (Packages replaced the old Packages tab with the
+  // Groups tab). Edit covers both create and edit modes.
+  PackageList: undefined;
   PackageEdit: { packageId?: number };
   // Booking creation moved from a tab to a stack screen so the Packages
   // tab could take its slot. Same params shape as before, plus optional
