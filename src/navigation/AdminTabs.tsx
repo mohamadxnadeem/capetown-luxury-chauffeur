@@ -98,10 +98,7 @@ export default function AdminTabs() {
         component={BookingGroupListScreen}
         options={{
           headerShown: false,
-          tabBarIcon: tabIcon(
-            "format-list-bulleted-type",
-            "format-list-bulleted"
-          ),
+          tabBarIcon: tabIcon("car-multiple", "car-multiple"),
         }}
       />
       <Tab.Screen

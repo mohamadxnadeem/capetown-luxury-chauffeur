@@ -38,11 +38,14 @@ function shortDate(iso: string): string {
 
 // For a group's list of children, compute the overall date range —
 // earliest first-day to latest last-day — so the row shows "when" at a
-// glance.
+// glance. Defensive: the LIST endpoint may return groups without the
+// nested bookings[] array (that payload belongs on the DETAIL endpoint),
+// in which case we return empty strings and the row shows "No dates".
 function groupDateRange(g: BookingGroup): [string, string] {
+  const bookings = g.bookings ?? [];
   let earliest = "";
   let latest = "";
-  for (const b of g.bookings) {
+  for (const b of bookings) {
     const [start, end] = bookingDateRange(b);
     if (start && (!earliest || start < earliest)) earliest = start;
     if (end && (!latest || end > latest)) latest = end;
@@ -192,7 +195,10 @@ function GroupRow({
   onPress: () => void;
 }) {
   const [earliest, latest] = groupDateRange(group);
-  const vehicleCount = group.bookings.filter((b) => b.car).length;
+  // Defensive: bookings[] may be missing on the list payload (vs the
+  // detail payload). Fall back to a "?" rather than crashing.
+  const bookings = group.bookings ?? [];
+  const vehicleCount = bookings.filter((b) => b?.car).length;
   const dateLabel = earliest
     ? earliest === latest
       ? shortDate(earliest)
