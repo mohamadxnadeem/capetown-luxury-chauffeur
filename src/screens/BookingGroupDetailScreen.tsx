@@ -35,6 +35,7 @@ import {
 import { bookingGroupProposalUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
 import { AddVehicleSheet } from "@/components/AddVehicleSheet";
+import { cleanGroupTitle } from "@/screens/BookingGroupListScreen";
 import type { RootStackParamList } from "@/navigation/types";
 import { colors } from "@/theme";
 
@@ -46,11 +47,13 @@ function digitsOnly(phone: string | null | undefined): string {
 
 function proposalMessage(g: BookingGroup): string {
   const proposalUrl = bookingGroupProposalUrl(g.group_reference);
-  const vehicleCount = g.bookings.filter((b) => b.car).length;
+  const bookings = g.bookings ?? [];
+  const vehicleCount = bookings.filter((b) => b?.car).length;
+  const cleanTitle = cleanGroupTitle(g.title, g.customer_name);
   return [
     `Hi ${g.customer_name || "there"},`,
     "",
-    g.title || "Your Cape Town Concierge booking confirmation.",
+    cleanTitle || "Your Cape Town Concierge booking confirmation.",
     "",
     vehicleCount > 0
       ? `🚗 ${vehicleCount} ${vehicleCount === 1 ? "vehicle" : "vehicles"}`
@@ -218,7 +221,7 @@ export default function BookingGroupDetailScreen() {
       await Share.share({
         message: proposalMessage(group),
         url: proposalUrl,
-        title: group.title,
+        title: cleanGroupTitle(group.title, group.customer_name),
       });
     } catch {
       // Share sheet dismissed — nothing to do.
@@ -287,7 +290,10 @@ export default function BookingGroupDetailScreen() {
           <Divider style={styles.divider} />
 
           <SectionLabel>Booking</SectionLabel>
-          <Row label="Title" value={group.title} />
+          <Row
+            label="Title"
+            value={cleanGroupTitle(group.title, group.customer_name)}
+          />
           <Row
             label="Total"
             value={`${group.currency || "ZAR"} ${group.total_client_amount}`}
@@ -447,7 +453,7 @@ function Hero({ group }: { group: BookingGroup }) {
           </View>
         </View>
         <Text style={styles.heroTitle}>
-          {group.title || `Trip for ${group.customer_name || "client"}`}
+          {cleanGroupTitle(group.title, group.customer_name)}
         </Text>
         {dateLabel ? <Text style={styles.heroDates}>{dateLabel}</Text> : null}
         <Text style={styles.heroTotal}>

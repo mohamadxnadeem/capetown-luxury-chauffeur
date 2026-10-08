@@ -36,6 +36,31 @@ function shortDate(iso: string): string {
   return d.toLocaleDateString("en", { day: "numeric", month: "short" });
 }
 
+// Rewrites titles stored on legacy groups so the sales-y "proposal"
+// language stops showing up in the UI. Older groups were saved with
+// titles like "2-vehicle proposal for Alex Smith" because that used
+// to be the mobile's auto-generated default. New groups default to
+// "Trip for X", but existing rows in the database still carry the
+// old string. This helper is a display-time rewrite — the stored
+// value doesn't change until the operator edits the group.
+export function cleanGroupTitle(
+  title: string | null | undefined,
+  customerName: string | null | undefined
+): string {
+  const t = (title ?? "").trim();
+  if (!t) return `Trip for ${customerName || "client"}`;
+  const legacyPrefix = /^\d+[-\s]vehicle\s+proposal\s+for\s+/i;
+  if (legacyPrefix.test(t)) {
+    const stripped = t.replace(legacyPrefix, "").trim();
+    return `Trip for ${stripped || customerName || "client"}`;
+  }
+  // Also catch bare "proposal" / "N-vehicle proposal" with no customer.
+  if (/^\d+[-\s]vehicle\s+proposal$/i.test(t)) {
+    return `Trip for ${customerName || "client"}`;
+  }
+  return t;
+}
+
 // For a group's list of children, compute the overall date range —
 // earliest first-day to latest last-day — so the row shows "when" at a
 // glance. Defensive: the LIST endpoint may return groups without the
@@ -218,7 +243,7 @@ function GroupRow({
           {group.group_reference}
         </Text>
         <Text style={styles.rowTitle} numberOfLines={1}>
-          {group.title || `Trip for ${group.customer_name || "client"}`}
+          {cleanGroupTitle(group.title, group.customer_name)}
         </Text>
         <Text style={styles.rowMeta} numberOfLines={1}>
           {group.customer_name}
