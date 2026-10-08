@@ -1,7 +1,10 @@
 import React, { useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
   Linking,
+  Modal,
+  Platform,
   ScrollView,
   Share,
   StyleSheet,
@@ -14,6 +17,7 @@ import {
   Card,
   Divider,
   Text,
+  TextInput,
 } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
@@ -25,6 +29,7 @@ import {
   useCancelBookingGroup,
   useConfirmBookingGroup,
   useRemoveBookingFromGroup,
+  useUpdateBookingGroup,
 } from "@/hooks/useBookingGroups";
 import { useBookingFormOptions } from "@/hooks/useBookings";
 import {
@@ -119,10 +124,13 @@ export default function BookingGroupDetailScreen() {
   const cancelMutation = useCancelBookingGroup(groupId);
   const removeMutation = useRemoveBookingFromGroup(groupId);
   const addBookingMutation = useAddBookingToGroup(groupId);
+  const updateMutation = useUpdateBookingGroup(groupId);
   const formOptionsQuery = useBookingFormOptions();
 
   const [busy, setBusy] = useState(false);
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
 
   if (groupQuery.isLoading) {
     return (
@@ -363,6 +371,26 @@ export default function BookingGroupDetailScreen() {
             ) : null}
             <Button
               mode="outlined"
+              onPress={() => {
+                // Seed the input with the CLEANED title so legacy
+                // "N-vehicle proposal for X" strings don't get edited
+                // in — operator sees the version the UI shows.
+                setRenameValue(
+                  cleanGroupTitle(group.title, group.customer_name)
+                );
+                setRenameOpen(true);
+              }}
+              disabled={updateMutation.isPending}
+              style={styles.manageButton}
+              contentStyle={styles.manageButtonContent}
+              labelStyle={styles.manageLabel}
+              textColor={colors.primary}
+              icon="pencil"
+            >
+              Rename booking
+            </Button>
+            <Button
+              mode="outlined"
               onPress={handleCancel}
               loading={busy || cancelMutation.isPending}
               disabled={busy || cancelMutation.isPending}
@@ -415,6 +443,75 @@ export default function BookingGroupDetailScreen() {
           }
         }}
       />
+
+      {/* Rename sheet — simple one-field modal that PATCHes the group's
+          title. Persists to the backend so the new title shows up on
+          every device and on the client-facing confirmation page. */}
+      <Modal
+        visible={renameOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRenameOpen(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.renameOverlay}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={styles.renameBackdrop}
+            onPress={() => {
+              if (updateMutation.isPending) return;
+              setRenameOpen(false);
+            }}
+          />
+          <View style={styles.renameSheet}>
+            <Text style={styles.renameTitle}>Rename booking</Text>
+            <Text style={styles.renameSub}>
+              This is the title the client sees on their booking
+              confirmation page.
+            </Text>
+            <TextInput
+              value={renameValue}
+              onChangeText={setRenameValue}
+              mode="outlined"
+              placeholder={`Trip for ${group.customer_name || "client"}`}
+              style={styles.renameInput}
+              autoFocus
+            />
+            <View style={styles.renameActions}>
+              <Button
+                mode="text"
+                onPress={() => setRenameOpen(false)}
+                disabled={updateMutation.isPending}
+                textColor={colors.muted}
+              >
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                onPress={async () => {
+                  try {
+                    await updateMutation.mutateAsync({
+                      title: renameValue.trim(),
+                    });
+                    setRenameOpen(false);
+                  } catch (err: unknown) {
+                    Alert.alert("Couldn't rename", formatApiError(err));
+                  }
+                }}
+                loading={updateMutation.isPending}
+                disabled={updateMutation.isPending}
+                buttonColor={colors.primary}
+                textColor={colors.onPrimary}
+                icon="check"
+              >
+                Save
+              </Button>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </ScrollView>
   );
 }
@@ -739,4 +836,38 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cancelledText: { color: "#b03b3b", fontWeight: "700" },
+
+  renameOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+    padding: 20,
+  },
+  renameBackdrop: StyleSheet.absoluteFillObject,
+  renameSheet: {
+    width: "100%",
+    maxWidth: 420,
+    padding: 20,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+  },
+  renameTitle: {
+    color: colors.heading,
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  renameSub: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  renameInput: { backgroundColor: colors.surface, marginBottom: 12 },
+  renameActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
 });
