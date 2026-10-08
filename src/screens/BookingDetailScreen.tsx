@@ -30,7 +30,10 @@ import {
   useDriverTrip,
   useUpdateBooking,
 } from "@/hooks/useBookings";
-import { useConvertBookingToGroup } from "@/hooks/useBookingGroups";
+import {
+  useAdminBookingGroups,
+  useConvertBookingToGroup,
+} from "@/hooks/useBookingGroups";
 import { useDrivers } from "@/hooks/useDrivers";
 import { useAuthStore } from "@/state/auth";
 import type { RootStackParamList } from "@/navigation/types";
@@ -279,6 +282,10 @@ export default function BookingDetailScreen() {
   const [driverMenuOpen, setDriverMenuOpen] = useState(false);
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
   const formOptionsQuery = useBookingFormOptions();
+  // Only used when we need to recover a booking that was converted
+  // behind our back — we hit the groups list with the extracted
+  // group_reference and navigate the operator to the real group screen.
+  const allGroupsQuery = useAdminBookingGroups();
 
   async function assignDriver(driverId: number | null) {
     setDriverMenuOpen(false);
@@ -754,8 +761,13 @@ export default function BookingDetailScreen() {
               ) : null}
               {/* Standalone booking → offer to promote it to a group so
                   the operator can attach a second vehicle. Hidden when
-                  the booking is already grouped. */}
-              {!booking.group_id ? (
+                  the booking is already grouped — once in a group, more
+                  vehicles get added via the group screen's +Add vehicle
+                  button, which uses /add-booking/ instead of
+                  /convert-to-group/. We check BOTH group_id and
+                  group_reference because stale cache can occasionally
+                  leave one populated and the other not. */}
+              {!booking.group_id && !booking.group_reference ? (
                 <Button
                   mode="outlined"
                   onPress={() => setAddVehicleOpen(true)}
@@ -838,9 +850,49 @@ export default function BookingDetailScreen() {
             // of truth for this proposal.
             navigation.replace("BookingGroupDetail", { groupId: group.id });
           } catch (err: unknown) {
-            // Backend returns 400 with a helpful message when the
-            // booking is already grouped. Surface it directly.
-            Alert.alert("Couldn't add vehicle", formatApiError(err));
+            // Backend returns 400 with "This booking is already part of
+            // group CTC-GRP-XXXX. Use /add-booking/ instead." when the
+            // mobile's cached booking state was stale and we called
+            // convert-to-group on an already-grouped booking. Recover by
+            // extracting the group reference, looking up the group's id
+            // in the groups list cache, and auto-navigating the operator
+            // there so they can finish the add via +Add vehicle.
+            const message = formatApiError(err);
+            const groupRefMatch = /CTC-GRP-[A-Z0-9]+/i.exec(message);
+            if (groupRefMatch) {
+              const groupRef = groupRefMatch[0].toUpperCase();
+              const existingGroup = allGroupsQuery.data?.find(
+                (g) => g.group_reference.toUpperCase() === groupRef
+              );
+              setAddVehicleOpen(false);
+              // Force a refresh of the booking's detail cache so the
+              // group chip appears next time the operator opens it.
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "booking", booking.id],
+              });
+              if (existingGroup) {
+                Alert.alert(
+                  "Already in a group",
+                  `This booking is already part of ${groupRef}. Opening the group so you can add more vehicles there.`,
+                  [
+                    {
+                      text: "Open group",
+                      onPress: () =>
+                        navigation.replace("BookingGroupDetail", {
+                          groupId: existingGroup.id,
+                        }),
+                    },
+                  ]
+                );
+              } else {
+                Alert.alert(
+                  "Already in a group",
+                  `This booking is already part of ${groupRef}. Open the group from the booking list or the group chip above, then tap "+ Add vehicle" there.`
+                );
+              }
+            } else {
+              Alert.alert("Couldn't add vehicle", message);
+            }
           }
         }}
       />
