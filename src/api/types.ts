@@ -834,3 +834,35 @@ export interface CalendarTokenResponse {
   ical_url: string | null;
   webcal_url: string | null;
 }
+
+// ---- Voice assistant ----------------------------------------------------
+
+export type AssistantRole = "user" | "assistant";
+
+export interface AssistantMessage {
+  id: number;
+  role: AssistantRole;
+  body: string;
+  tool_calls_summary?: string | null;
+  created_at: string;
+}
+
+export interface AssistantConversationSummary {
+  id: number;
+  title: string;
+  last_message_at: string;
+  message_count: number;
+}
+
+export interface AssistantConversationDetail {
+  id: number;
+  title: string;
+  messages: AssistantMessage[];
+  started_at: string;
+  last_message_at: string;
+}
+
+export interface AssistantChatResponse {
+  conversation_id: number;
+  assistant_message: AssistantMessage;
+}

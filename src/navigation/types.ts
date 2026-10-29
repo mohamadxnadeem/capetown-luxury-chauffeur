@@ -73,4 +73,8 @@ export type RootStackParamList = {
   Inbox: undefined;
   InboxConversation: { conversationId: number };
   MailbotSettings: undefined;
+  // Voice assistant — modal/full-screen chat with the AI assistant.
+  // Read-only in Phase 1 (asks about bookings/earnings/drafts); drafts
+  // and auto-actions come later.
+  Assistant: undefined;
 };

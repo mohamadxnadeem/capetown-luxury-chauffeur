@@ -16,6 +16,7 @@ import BookingCalendarScreen from "@/screens/BookingCalendarScreen";
 import BookingGroupDetailScreen from "@/screens/BookingGroupDetailScreen";
 import InboxConversationScreen from "@/screens/InboxConversationScreen";
 import MailbotSettingsScreen from "@/screens/MailbotSettingsScreen";
+import AssistantScreen from "@/screens/AssistantScreen";
 import DriverListScreen from "@/screens/DriverListScreen";
 import VillaDetailScreen from "@/screens/VillaDetailScreen";
 import VillaEditScreen from "@/screens/VillaEditScreen";
@@ -211,6 +212,11 @@ export default function AppNavigator() {
               name="MailbotSettings"
               component={MailbotSettingsScreen}
               options={{ title: "Mailbot" }}
+            />
+            <Stack.Screen
+              name="Assistant"
+              component={AssistantScreen}
+              options={{ headerShown: false, presentation: "modal" }}
             />
             <Stack.Screen
               name="DriverList"

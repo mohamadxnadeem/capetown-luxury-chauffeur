@@ -280,6 +280,14 @@ export default function HomeScreen() {
         />
       )}
     />
+    {/* Voice assistant FAB — sits above the +New Booking FAB. Opens
+        the modal assistant screen; mic button lives inside. */}
+    <FAB
+      icon="microphone"
+      style={styles.fabAssistant}
+      color={colors.onPrimary}
+      onPress={() => navigation.navigate("Assistant")}
+    />
     <FAB
       icon="plus"
       style={styles.fab}
@@ -496,6 +504,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 16,
     bottom: 16,
+    backgroundColor: colors.primary,
+  },
+  fabAssistant: {
+    position: "absolute",
+    right: 16,
+    bottom: 86,
     backgroundColor: colors.primary,
   },
   hero: {
