@@ -1,11 +1,12 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   NavigationContainer,
   NavigationContainerRef,
 } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import * as Notifications from "expo-notifications";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, AppState, View } from "react-native";
+import { Button, Text } from "react-native-paper";
 import LoginScreen from "@/screens/LoginScreen";
 import BookingDetailScreen from "@/screens/BookingDetailScreen";
 import NewBookingScreen from "@/screens/NewBookingScreen";
@@ -28,7 +29,12 @@ import AdminTabs from "@/navigation/AdminTabs";
 import DriverTabs from "@/navigation/DriverTabs";
 import { useAuthStore } from "@/state/auth";
 import { detectRole } from "@/api/auth";
-import { proactiveRefresh, setOnAuthFailure, tokenStorage } from "@/api/client";
+import {
+  proactiveRefresh,
+  refreshIfStale,
+  setOnAuthFailure,
+  tokenStorage,
+} from "@/api/client";
 import {
   extractBookingFromNotification,
   extractConversationFromNotification,
@@ -46,13 +52,15 @@ export default function AppNavigator() {
   const signedOut = useAuthStore((s) => s.signedOut);
   const navRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
 
-  // On launch: if a refresh token exists, try to detect role and skip login.
-  // We also proactively refresh the token BEFORE the first API call so the
-  // backend rotates it to a fresh one. This keeps the operator logged in
-  // indefinitely as long as they open the app at least once per
-  // refresh-token-lifetime window (server-configured; Simple JWT default is
-  // 1 day). Without this, a day of inactivity → expired refresh token →
-  // kicked back to login on the next request.
+  // Shown only when a legacy session (no stored role) cannot reach the
+  // server on launch. Tokens are kept; Retry runs the bootstrap again.
+  const [bootError, setBootError] = useState(false);
+  const [bootAttempt, setBootAttempt] = useState(0);
+
+  // On launch: stay signed in from stored tokens + role, even offline. Only
+  // a refresh the server rejects (401/400) signs out. The refresh runs in
+  // the background so an offline launch does not wait on a timeout, and it
+  // rotates the refresh token so the session keeps extending with use.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -61,28 +69,62 @@ export default function AppNavigator() {
         signedOut();
         return;
       }
-      // Best-effort proactive refresh. If it fails because the refresh
-      // token already expired, we fall through to detectRole() which will
-      // 401, triggering the normal bail-to-login flow. If it succeeds, the
-      // next detectRole() call uses the fresh access token.
-      await proactiveRefresh();
+      const storedRole = await tokenStorage.getRole();
       if (cancelled) return;
+
+      if (storedRole) {
+        signedIn(storedRole, null);
+        // Fire and forget. "invalid" signs out via onAuthFailure.
+        void proactiveRefresh();
+        if (storedRole === "driver") {
+          // Driver profile is a nicety; detectRole degrades to null offline.
+          const { driver } = await detectRole();
+          if (!cancelled && driver && useAuthStore.getState().isAuthenticated) {
+            signedIn("driver", driver);
+          }
+        }
+        return;
+      }
+
+      // Legacy session with no stored role: needs the server to tell admin
+      // from driver.
+      const outcome = await proactiveRefresh();
+      if (cancelled) return;
+      if (outcome.status === "invalid") {
+        signedOut();
+        return;
+      }
       try {
         const { role: detected, driver } = await detectRole();
         if (!cancelled) signedIn(detected, driver);
       } catch {
-        if (!cancelled) {
-          await tokenStorage.clear();
+        if (cancelled) return;
+        // If the interceptor found the session dead it already cleared the
+        // tokens. Otherwise this is a network or server problem: keep the
+        // tokens and offer a retry instead of signing out.
+        if (!(await tokenStorage.getRefresh())) {
           signedOut();
+        } else {
+          setBootError(true);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [signedIn, signedOut]);
+  }, [signedIn, signedOut, bootAttempt]);
 
-  // Wire interceptor → bounce to login on hard auth failure.
+  // Returning to the foreground: renew the access token if it is about to
+  // lapse so the first tap does not 401.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refreshIfStale();
+    });
+    return () => sub.remove();
+  }, [isAuthenticated]);
+
+  // Wire interceptor: bounce to login when the session is definitely dead.
   useEffect(() => {
     setOnAuthFailure(() => {
       signedOut();
@@ -92,7 +134,7 @@ export default function AppNavigator() {
 
   // Notification deep-link: open BookingDetail OR the Inbox conversation
   // depending on which id the notification carries. A Mailbot draft carries
-  // conversation_id (and takes precedence — the operator lands where they
+  // conversation_id (and takes precedence: the operator lands where they
   // can approve). Booking reminders carry booking_id/booking_ref.
   useEffect(() => {
     function routeFromNotification(
@@ -139,8 +181,34 @@ export default function AppNavigator() {
 
   if (bootstrapping) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          gap: 12,
+        }}
+      >
+        {bootError ? (
+          <>
+            <Text style={{ color: colors.heading, textAlign: "center" }}>
+              Couldn't reach the server. Check your signal and try again.
+            </Text>
+            <Button
+              mode="contained"
+              buttonColor={colors.primary}
+              onPress={() => {
+                setBootError(false);
+                setBootAttempt((n) => n + 1);
+              }}
+            >
+              Retry
+            </Button>
+          </>
+        ) : (
+          <ActivityIndicator />
+        )}
       </View>
     );
   }
