@@ -1,0 +1,17 @@
+# Publishes an over-the-air update to installed phones every time a change
+# is merged into the app's default branch. Runs on Expo (EAS Workflows) and
+# needs the GitHub repo linked to the Expo project once (expo.dev > project
+# > Project settings > GitHub). Native changes (new native modules, app.json
+# version bump) still need a new store build.
+name: Publish app update
+
+on:
+  push:
+    branches: ['claude/scaffold-react-native-app-GQ0Bs']
+
+jobs:
+  publish_update:
+    name: Publish update
+    type: update
+    params:
+      branch: production
