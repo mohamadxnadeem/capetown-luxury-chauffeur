@@ -201,7 +201,12 @@ One file per screen. Grouped roughly by domain:
 - `AssistantScreen.tsx` modal voice chat. Live transcript overlay
   while recording, chat log with user and assistant bubbles, big
   mic button, text input fallback, example chips when empty.
-  expo-speech plays the agent's replies aloud
+  expo-speech plays the agent's replies aloud. Hands-free toggle
+  loops listen, send, speak, listen; stops on tap, leaving the
+  screen, app backgrounding, an error or a silent turn. Status pill
+  shows Listening / Thinking / Speaking. History icon opens a sheet
+  of past conversations (open, delete with confirm). Chat call uses
+  a 90s timeout; backend `detail` is shown for 400/502/503
 - `FinanceScreen.tsx` revenue summary, graphs
 - `DriverListScreen.tsx` driver management
 - `ProfileScreen.tsx` sign out, Drivers nav row, Packages nav row,
@@ -750,6 +755,10 @@ format.
   JWT as 403 `token_not_valid` now triggers refresh (plain 403 does
   not). Refresh token written before access. Offline cold start stays
   signed in. Foreground refresh when access is older than 50 min.
+  JS only, ships by OTA
+- Assistant voice mode: hands-free loop, Listening / Thinking /
+  Speaking status, 90s chat timeout, backend error `detail` shown
+  (nothing spoken on error), conversation history sheet with delete.
   JS only, ships by OTA
 
 ### 2026-10-30
