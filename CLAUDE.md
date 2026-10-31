@@ -542,8 +542,12 @@ write):
 
 1. Open a PR on branch `agent/<task>` (see section 7)
 2. Operator merges after review
-3. For JS-only changes: `eas update --branch production` on
-   whichever branch is now main. Live within minutes
+3. For JS-only changes: nothing to do. The EAS Workflow
+   `.eas/workflows/publish-app-update.yml` publishes an OTA to the
+   `production` update branch on every push to the default branch.
+   Runs on Expo, needs the GitHub repo linked to the Expo project
+   (expo.dev project settings > GitHub). Runs show on expo.dev under
+   Workflows. Live within minutes
 4. For native changes: `eas build` then TestFlight / Play. Operator
    installs the new build. From then on OTAs again reach it
 
@@ -750,6 +754,11 @@ format.
 
 ### 2026-10-31
 
+- Auto publish: merging into the default branch now publishes an OTA
+  update via EAS Workflows (`.eas/workflows/publish-app-update.yml`,
+  needs GitHub linked on expo.dev). No manual OTA step after merge.
+  GitHub Actions was not used: the agent token cannot push
+  `.github/workflows` files
 - Stay logged in: only a refresh the server rejects (401/400) signs
   out; network errors, timeouts and 5xx keep the session. Expired
   JWT as 403 `token_not_valid` now triggers refresh (plain 403 does
