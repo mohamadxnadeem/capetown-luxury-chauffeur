@@ -281,24 +281,59 @@ Token refresh in `src/api/client.ts`:
 
 1. Request interceptor reads `tokenStorage.getAccess()` and attaches
    `Authorization: Bearer <access>`
-2. Response interceptor catches 401, triggers a single-flight
-   refresh at `/api/users/token/refresh/` with body `{ refresh }`,
-   stores new tokens (backend rotates refresh tokens too), retries
-   the original request once
-3. If the refresh itself 401s or returns no access token, bails to
-   login via `onAuthFailure` callback (wired from `AppNavigator`)
+2. A request counts as "token rejected" on 401, OR on 403 whose body
+   has `code: "token_not_valid"` (`isTokenRejected()`). The backend
+   lists SessionAuthentication before JWTAuthentication, so DRF
+   answers an expired JWT with 403, not 401. A plain 403 without that
+   code is a real permission denial: it passes through untouched and
+   never signs out
+3. On a rejected token the response interceptor runs a single-flight
+   refresh at `/api/users/token/refresh/` with body `{ refresh }` and
+   retries the original request once. `refreshAccessToken()` returns
+   one of three outcomes:
+   - `ok`: new tokens stored (refresh token written BEFORE access, so
+     an interrupted write never leaves a blacklisted refresh next to
+     a fresh access)
+   - `invalid`: the refresh endpoint answered 401 or 400 (or 403
+     `token_not_valid`). The ONLY case that clears tokens and bails to
+     login via `onAuthFailure` (wired from `AppNavigator`)
+   - `unavailable`: no response, timeout, 5xx or missing access in the
+     body. The original request rejects with its own error, tagged
+     `sessionRenewUnavailable` so `formatApiError` says "Couldn't reach
+     the server" instead of "session expired". The user stays signed
+     in and the next request tries again
+4. If the retried request is token-rejected again right after an `ok`
+   refresh, the session is treated as dead and bails to login
+5. A `sessionEpoch` counter is bumped on login (`tokenStorage.set`)
+   and sign out (`tokenStorage.clear`). A refresh that started under an
+   older epoch never writes or wipes tokens, so Sign out cannot be
+   undone by an in-flight refresh and a fresh login cannot be wiped by
+   a stale failure
 
-Proactive refresh runs on every cold start before the first API
-call, extending the session as long as the operator opens the app
-at least once per refresh-token lifetime window.
+Backend side (contract `2026-10-31-stay-logged-in`): refresh tokens
+last 365 days of inactivity, rotate on every refresh, and a refresh
+token rotated less than 120 seconds ago is still accepted (covers a
+response lost to a signal drop).
 
 Cold start bootstrap in `AppNavigator`:
 
-1. Check for a stored refresh token
-2. If present, call `proactiveRefresh()` (best effort)
-3. Call `detectRole()` which reads the stored role, or probes
-   `/api/driver/me/` on legacy sessions (404 => admin)
-4. If detectRole throws, clear tokens and sign out
+1. No stored refresh token: show Login
+2. Stored role (admin or driver): sign in immediately from storage,
+   even offline, then run `proactiveRefresh()` in the background.
+   Only an `invalid` outcome signs out. Drivers fetch their profile
+   in the background too (degrades to null offline)
+3. No stored role (legacy session): refresh, then `detectRole()`
+   probes `/api/driver/me/` (404 => admin). On a network or server
+   error the tokens are KEPT and a "Couldn't reach the server" screen
+   with Retry is shown instead of signing out
+
+Foreground refresh: when the app returns to `active` (AppState) and
+the access token is older than 50 minutes or within 10 minutes of
+`exp` (read from the JWT `iat` / `exp` claims), `refreshIfStale()`
+renews it so the first tap does not hit a 401.
+
+Manual Sign out (Profile) calls `logout()` which deletes the push
+token best-effort, then `tokenStorage.clear()`.
 
 ### Every backend endpoint called
 
@@ -707,6 +742,15 @@ or the mic button doing nothing, verify they are on a build >= 0.3.0
 
 Newest first. Add new entries at the top with the date in ISO
 format.
+
+### 2026-10-31
+
+- Stay logged in: only a refresh the server rejects (401/400) signs
+  out; network errors, timeouts and 5xx keep the session. Expired
+  JWT as 403 `token_not_valid` now triggers refresh (plain 403 does
+  not). Refresh token written before access. Offline cold start stays
+  signed in. Foreground refresh when access is older than 50 min.
+  JS only, ships by OTA
 
 ### 2026-10-30
 

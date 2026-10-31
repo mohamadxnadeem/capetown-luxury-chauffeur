@@ -1,4 +1,5 @@
 import { AxiosError } from "axios";
+import { isTokenRejected, SessionRenewUnavailableError } from "./client";
 
 // Django REST Framework validation errors arrive in arbitrarily nested shapes:
 //   "a plain string"
@@ -30,7 +31,7 @@ function flatten(value: unknown, prefix: string): string[] {
   if (typeof value === "object") {
     return Object.entries(value as Record<string, unknown>).flatMap(
       ([k, v]) => {
-        // "non_field_errors" and "detail" are DRF's generic buckets — their
+        // "non_field_errors" and "detail" are DRF's generic buckets: their
         // messages are self-explanatory, so don't prepend the key name.
         const skipKey = k === "non_field_errors" || k === "detail";
         const childPrefix = skipKey ? prefix : prefix ? `${prefix} → ${k}` : k;
@@ -45,11 +46,16 @@ function flatten(value: unknown, prefix: string): string[] {
 // suitable for an Alert. Surfaces DRF field errors instead of "[object Object]".
 export function formatApiError(err: unknown): string {
   const axiosErr = err as AxiosError;
-  const status = axiosErr?.response?.status;
 
-  // Expired / invalid JWT — show a plain "log in again" message rather than
+  // The token needed renewing but the server could not be reached. The
+  // user is still signed in, so do not tell them to log in again.
+  if ((err as SessionRenewUnavailableError)?.sessionRenewUnavailable) {
+    return "Couldn't reach the server. Check your signal and try again.";
+  }
+
+  // Expired / invalid JWT: show a plain "log in again" message rather than
   // the raw token_not_valid dump.
-  if (status === 401) {
+  if (isTokenRejected(err)) {
     return "Your session has expired. Please log in again.";
   }
 
