@@ -752,6 +752,10 @@ or the mic button doing nothing, verify they are on a build >= 0.3.0
 Newest first. Add new entries at the top with the date in ISO
 format.
 
+### 2026-11-02
+
+- Group detail: same vehicle can be added again as another shift (Shift 1/2 labels with driver, share message counts distinct vehicles, overlap error shown clearly).
+
 ### 2026-10-31
 
 - Auto publish: merging into the default branch now publishes an OTA

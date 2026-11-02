@@ -37,6 +37,9 @@ interface Props {
   // Vehicle IDs already used elsewhere in this booking/group — excluded
   // from the picker so the operator can't double-pick the same vehicle.
   excludeVehicleIds?: number[];
+  // Vehicle IDs already in the group. Still pickable: picking one adds it
+  // as another shift (fresh driver, own times and rates).
+  usedVehicleIds?: number[];
   vehicles: Vehicle[];
   drivers: DriverNested[];
   submitting: boolean;
@@ -98,6 +101,7 @@ export function AddVehicleSheet({
   defaultPickupLocation,
   defaultDropoffLocation,
   excludeVehicleIds = [],
+  usedVehicleIds = [],
   vehicles,
   drivers,
   submitting,
@@ -161,7 +165,12 @@ export function AddVehicleSheet({
     setVehicleId(v.id);
     setClientRate((r) => (r ? r : v.price ?? ""));
     setDriverRate((r) => (r ? r : v.driver?.default_daily_rate ?? ""));
-    setDriverId((cur) => (cur == null ? v.driver?.id ?? null : cur));
+    // A repeat vehicle is a new shift: do not prefill its usual driver.
+    if (!usedVehicleIds.includes(v.id)) {
+      setDriverId((cur) => (cur == null ? v.driver?.id ?? null : cur));
+    } else {
+      setDriverId(null);
+    }
     setVehicleListOpen(false);
   }
 
@@ -273,7 +282,11 @@ export function AddVehicleSheet({
             contentContainerStyle={styles.sheetContent}
             keyboardShouldPersistTaps="handled"
           >
-            <Text style={styles.sheetTitle}>{heading}</Text>
+            <Text style={styles.sheetTitle}>
+              {selectedVehicle && usedVehicleIds.includes(selectedVehicle.id)
+                ? `Add another shift for ${selectedVehicle.title}`
+                : heading}
+            </Text>
             {description ? (
               <Text style={styles.sheetSub}>{description}</Text>
             ) : null}
@@ -296,6 +309,13 @@ export function AddVehicleSheet({
                 {vehicleListOpen ? "▴" : "▾"}
               </Text>
             </TouchableOpacity>
+            {selectedVehicle && usedVehicleIds.includes(selectedVehicle.id) ? (
+              <Text style={styles.sheetSub}>
+                This vehicle is already in the booking, so this is added as a
+                separate shift. Pick its own driver, times and rates. Shift
+                times must not overlap the other shift.
+              </Text>
+            ) : null}
             {vehicleListOpen ? (
               <View style={styles.sheetInlineList}>
                 {availableVehicles.length === 0 ? (
