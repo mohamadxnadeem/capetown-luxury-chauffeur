@@ -1255,16 +1255,31 @@ export default function NewBookingScreen() {
               );
             })}
             {(() => {
-              const clientTotal = form.selectedDates.reduce(
-                (sum, d) =>
-                  sum + (parseFloat(form.dayDetails[d]?.clientRate || "") || 0),
-                0
+              // Split dates have no form inputs: add their stored rows' rates.
+              const splitSet = splitDateSet(form.originalDays);
+              const storedSplit = form.originalDays.filter(
+                (r) => splitSet.has(r.date) && form.selectedDates.includes(r.date)
               );
-              const driverTotal = form.selectedDates.reduce(
-                (sum, d) =>
-                  sum + (parseFloat(form.dayDetails[d]?.driverRate || "") || 0),
-                0
-              );
+              const clientTotal =
+                form.selectedDates.reduce(
+                  (sum, d) =>
+                    sum +
+                    (splitSet.has(d)
+                      ? 0
+                      : parseFloat(form.dayDetails[d]?.clientRate || "") || 0),
+                  0
+                ) +
+                storedSplit.reduce((s, r) => s + (parseFloat(r.client_rate ?? "") || 0), 0);
+              const driverTotal =
+                form.selectedDates.reduce(
+                  (sum, d) =>
+                    sum +
+                    (splitSet.has(d)
+                      ? 0
+                      : parseFloat(form.dayDetails[d]?.driverRate || "") || 0),
+                  0
+                ) +
+                storedSplit.reduce((s, r) => s + (parseFloat(r.driver_rate) || 0), 0);
               if (clientTotal === 0 && driverTotal === 0) return null;
               return (
                 <View style={styles.totals}>
