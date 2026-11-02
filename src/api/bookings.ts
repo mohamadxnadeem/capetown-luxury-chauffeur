@@ -1,9 +1,13 @@
 import { api } from "./client";
 import type {
   Booking,
+  BookingDay,
   BookingFormOptions,
   CreateBookingPayload,
   DriverScheduleEvent,
+  SplitDayPayload,
+  SplitDayResponse,
+  UpdateBookingDayPayload,
   VehiclesAvailableResponse,
 } from "./types";
 
@@ -161,5 +165,33 @@ export async function fetchDriverSchedule(): Promise<DriverScheduleEvent[]> {
 
 export async function fetchDriverTrip(bookingRef: string): Promise<Booking> {
   const resp = await api.get<Booking>(`/api/driver/trips/${bookingRef}/`);
+  return resp.data;
+}
+
+// ---- Admin: booking days (per-day driver, split shifts) ------------------
+
+export async function updateBookingDay(
+  id: number | string,
+  patch: UpdateBookingDayPayload
+): Promise<BookingDay> {
+  const resp = await api.patch<BookingDay>(
+    `/api/admin/booking-days/${id}/update/`,
+    patch
+  );
+  return resp.data;
+}
+
+export async function deleteBookingDay(id: number | string): Promise<void> {
+  await api.delete(`/api/admin/booking-days/${id}/delete/`);
+}
+
+export async function splitBookingDay(
+  id: number | string,
+  payload: SplitDayPayload
+): Promise<SplitDayResponse> {
+  const resp = await api.post<SplitDayResponse>(
+    `/api/admin/booking-days/${id}/split/`,
+    payload
+  );
   return resp.data;
 }
