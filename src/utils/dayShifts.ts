@@ -1,4 +1,8 @@
-import type { Booking, BookingDay } from "@/api/types";
+import type {
+  Booking,
+  BookingDay,
+  CreateBookingDayPayload,
+} from "@/api/types";
 
 // "HH:MM" or "HH:MM:SS" to minutes since midnight, or null when invalid.
 export function toMinutes(t: string | null | undefined): number | null {
@@ -141,4 +145,65 @@ export function driverDays(booking: Booking, driverId: number): BookingDay[] {
       (d) => effectiveDriver(d, booking)?.id === driverId
     )
   );
+}
+
+// Dates carrying 2+ rows on one booking (split days).
+export function splitDateSet(days: BookingDay[]): Set<string> {
+  const count = new Map<string, number>();
+  for (const d of days) count.set(d.date, (count.get(d.date) ?? 0) + 1);
+  const out = new Set<string>();
+  count.forEach((n, date) => {
+    if (n > 1) out.add(date);
+  });
+  return out;
+}
+
+export function uniqueSortedDates(days: BookingDay[]): string[] {
+  return [...new Set(days.map((d) => d.date))].sort();
+}
+
+// A stored day row back into the write shape, untouched. `driver` is only
+// included when the backend returned it (older backends omit it).
+export function dayRowToPayload(d: BookingDay): CreateBookingDayPayload {
+  const p: CreateBookingDayPayload = {
+    date: d.date,
+    day_type: d.day_type,
+    start_time: d.start_time,
+    end_time: d.end_time,
+    end_next_day: !!d.end_next_day,
+    notes: d.notes,
+    client_rate: d.client_rate ?? "0.00",
+    driver_rate: d.driver_rate,
+    driver_payment_status: d.driver_payment_status,
+  };
+  if (d.driver !== undefined) p.driver = d.driver;
+  return p;
+}
+
+// Days array for an edit save. Split dates (2+ stored rows) are carried
+// through untouched, one entry per row. Other dates use the form's values
+// (`buildNormal`) and keep the day's own driver. The backend rewrites every
+// day row on save, so dropping a row here would delete a shift.
+export function buildEditDays(
+  original: BookingDay[],
+  selectedDates: string[],
+  buildNormal: (date: string) => CreateBookingDayPayload
+): CreateBookingDayPayload[] {
+  const split = splitDateSet(original);
+  const out: CreateBookingDayPayload[] = [];
+  for (const date of [...new Set(selectedDates)].sort()) {
+    if (split.has(date)) {
+      out.push(
+        ...sortDays(original.filter((d) => d.date === date)).map(dayRowToPayload)
+      );
+      continue;
+    }
+    const row = buildNormal(date);
+    const orig = original.find((d) => d.date === date);
+    if (orig && orig.driver !== undefined && row.driver === undefined) {
+      row.driver = orig.driver;
+    }
+    out.push(row);
+  }
+  return out;
 }

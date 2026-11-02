@@ -31,3 +31,27 @@ const b = { driver: { id: 5, full_name: "Main" }, days: [day({ id: 1 }), day({ i
 assert.deepStrictEqual(u.distinctDrivers(b).map((d) => d.id), [5, 7]);
 assert.strictEqual(u.driverDays(b, 7).length, 1);
 console.log("dayShifts OK");
+
+// Edit round-trip: a split date must come back as the same rows; other dates
+// keep their driver.
+{
+  const full = (o) => ({ notes: null, client_rate: "6500.00", driver_rate: "1500.00", driver_payment_status: "unpaid", ...day(o) });
+  const orig = [
+    full({ id: 2, start_time: "17:30:00", end_time: "02:00:00", end_next_day: true, client_rate: "0.00", driver: 14 }),
+    full({ id: 1, end_time: "17:30:00", driver: 12 }),
+    full({ id: 3, date: "2026-11-21", driver: null }),
+  ];
+  const out = u.buildEditDays(orig, ["2026-11-20", "2026-11-20", "2026-11-21"], (date) => ({
+    date, day_type: "full_day", start_time: "10:00:00", end_time: "18:00:00", end_next_day: false, notes: null, client_rate: "1.00", driver_rate: "2.00",
+  }));
+  assert.strictEqual(out.length, 3);
+  assert.deepStrictEqual(out.slice(0, 2).map((r) => [r.start_time, r.end_time, r.end_next_day, r.driver, r.client_rate]),
+    [["09:00:00", "17:30:00", false, 12, "6500.00"], ["17:30:00", "02:00:00", true, 14, "0.00"]]);
+  assert.strictEqual(out[2].start_time, "10:00:00");
+  assert.strictEqual(out[2].driver, null);
+  assert.deepStrictEqual([...u.splitDateSet(orig)], ["2026-11-20"]);
+  assert.deepStrictEqual(u.uniqueSortedDates(orig), ["2026-11-20", "2026-11-21"]);
+  const old = u.buildEditDays([full({ id: 9 })], ["2026-11-20"], (date) => ({ date, day_type: "full_day", client_rate: "1", driver_rate: "1" }));
+  assert.ok(!("driver" in old[0]));
+  console.log("edit round-trip OK");
+}

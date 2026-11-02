@@ -36,6 +36,7 @@ import { useHotels } from "@/hooks/useHotels";
 import type { BookedSlot } from "@/api/bookings";
 import type {
   Booking,
+  BookingDay,
   CreateBookingDayPayload,
   CreateBookingGroupChildPayload,
   CreateBookingGroupPayload,
@@ -47,6 +48,12 @@ import type {
 import type { RootStackParamList } from "@/navigation/types";
 import { formatApiError } from "@/api/errors";
 import { vehicleLabel } from "@/utils/vehicle";
+import {
+  buildEditDays,
+  sortDays,
+  splitDateSet,
+  uniqueSortedDates,
+} from "@/utils/dayShifts";
 import { calendarTheme, colors } from "@/theme";
 
 // Per-day record: each selected date carries its own schedule, description,
@@ -91,6 +98,9 @@ interface FormState {
   // selectedDates — an entry is added when a date is picked, removed when
   // deselected.
   dayDetails: Record<string, DayDetail>;
+  // Edit mode only: the booking's stored day rows. Dates with 2+ rows are
+  // split days, shown read-only and sent back untouched on save.
+  originalDays: BookingDay[];
   dayType: DayType;
   customerName: string;
   customerPhone: string;
@@ -172,6 +182,7 @@ const EMPTY_FORM: FormState = {
   driverId: null,
   selectedDates: [],
   dayDetails: {},
+  originalDays: [],
   dayType: "full_day",
   customerName: "",
   customerPhone: "",
@@ -223,7 +234,9 @@ function isOvernightShift(
 function bookingToForm(b: Booking): FormState {
   const days = b.days ?? [];
   const dayDetails: Record<string, DayDetail> = {};
+  const splitDates = splitDateSet(days);
   for (const d of days) {
+    if (splitDates.has(d.date)) continue;
     dayDetails[d.date] = {
       startTime: d.start_time ? d.start_time.slice(0, 5) : "",
       endTime: d.end_time ? d.end_time.slice(0, 5) : "",
@@ -241,8 +254,9 @@ function bookingToForm(b: Booking): FormState {
     customTotalClientAmount: b.car == null ? (b.total_client_amount ?? "") : "",
     vehicleId: b.car?.id ?? null,
     driverId: b.driver?.id ?? null,
-    selectedDates: days.map((d) => d.date).sort(),
+    selectedDates: uniqueSortedDates(days),
     dayDetails,
+    originalDays: days,
     dayType: first?.day_type ?? "full_day",
     customerName: b.customer_name ?? "",
     customerPhone: b.customer_phone ?? "",
@@ -619,7 +633,10 @@ export default function NewBookingScreen() {
       if (!first) return f;
       const template = f.dayDetails[first] ?? newDayDetail();
       const nextDetails: Record<string, DayDetail> = {};
-      for (const d of f.selectedDates) nextDetails[d] = { ...template };
+      const split = splitDateSet(f.originalDays);
+      for (const d of f.selectedDates) {
+        if (!split.has(d)) nextDetails[d] = { ...template };
+      }
       return { ...f, dayDetails: nextDetails };
     });
   }
@@ -655,6 +672,7 @@ export default function NewBookingScreen() {
 
     // Vehicle booking: per-day rates + times required.
     for (const date of form.selectedDates) {
+      if (splitDateSet(form.originalDays).has(date)) continue;
       const detail = form.dayDetails[date];
       if (!detail || !timeForApi(detail.startTime)) {
         return `Enter a start time (HH:MM) for ${prettyDate(date)}.`;
@@ -719,7 +737,7 @@ export default function NewBookingScreen() {
     // (backend can derive start/end from it).
     const days: CreateBookingDayPayload[] = form.noVehicle
       ? []
-      : form.selectedDates.map((date) => {
+      : buildEditDays(isEdit ? form.originalDays : [], form.selectedDates, (date) => {
           const detail = form.dayDetails[date] ?? newDayDetail();
           const overnight = isOvernightShift(detail.startTime, detail.endTime);
           return {
@@ -1114,6 +1132,30 @@ export default function NewBookingScreen() {
             {form.selectedDates.map((date, i) => {
               const detail = form.dayDetails[date] ?? newDayDetail();
               const slots = bookedSlotsByDate[date] ?? [];
+              const splitRows = splitDateSet(form.originalDays).has(date)
+                ? sortDays(form.originalDays.filter((x) => x.date === date))
+                : null;
+              if (splitRows) {
+                return (
+                  <View
+                    key={date}
+                    style={[styles.dayCard, i === 0 && styles.dayCardFirst]}
+                  >
+                    <View style={styles.dayCardHeader}>
+                      <Text style={styles.dayCardTitle}>{prettyDate(date)}</Text>
+                    </View>
+                    {splitRows.map((r, n) => (
+                      <Text key={r.id} style={styles.bookedSlotsHintText}>
+                        Shift {n + 1}: {(r.start_time ?? "").slice(0, 5)} - {(r.end_time ?? "").slice(0, 5)}
+                        {r.driver_name ? `  ·  ${r.driver_name}` : ""}
+                      </Text>
+                    ))}
+                    <Text style={styles.bookedSlotsHintSub}>
+                      Split into {splitRows.length} shifts. Edit the shifts on the booking screen.
+                    </Text>
+                  </View>
+                );
+              }
               return (
                 <View
                   key={date}
