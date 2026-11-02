@@ -50,10 +50,51 @@ function digitsOnly(phone: string | null | undefined): string {
   return (phone ?? "").replace(/\D+/g, "");
 }
 
+// Shift rule (shared with the website): per vehicle (car.id), if 2+ child
+// bookings, number them by earliest day (date, start_time, nulls last),
+// then booking_reference.
+function dayKey(b: Booking): [string, string] {
+  const d = b.days?.[0];
+  return [d?.date ?? "\uffff", d?.start_time ?? "\uffff"];
+}
+
+function computeShifts(bookings: Booking[]): Map<number, string> {
+  const byCar = new Map<number, Booking[]>();
+  for (const b of bookings) {
+    if (!b.car) continue;
+    byCar.set(b.car.id, [...(byCar.get(b.car.id) ?? []), b]);
+  }
+  const out = new Map<number, string>();
+  byCar.forEach((list) => {
+    if (list.length < 2) return;
+    const sorted = [...list].sort((a, b) => {
+      const [ad, at] = dayKey(a);
+      const [bd, bt] = dayKey(b);
+      return (
+        ad.localeCompare(bd) ||
+        at.localeCompare(bt) ||
+        a.booking_reference.localeCompare(b.booking_reference)
+      );
+    });
+    sorted.forEach((b, i) => out.set(b.id, `Shift ${i + 1}`));
+  });
+  return out;
+}
+
 function proposalMessage(g: BookingGroup): string {
   const proposalUrl = bookingGroupProposalUrl(g.group_reference);
   const bookings = g.bookings ?? [];
-  const vehicleCount = bookings.filter((b) => b?.car).length;
+  const withCar = bookings.filter((b) => b?.car);
+  const vehicleCount = new Set(withCar.map((b) => b.car!.id)).size;
+  const shiftLines: string[] = [];
+  const seen = new Set<number>();
+  for (const b of withCar) {
+    const id = b.car!.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const n = withCar.filter((x) => x.car!.id === id).length;
+    if (n > 1) shiftLines.push(`🚗 ${b.car!.title}: ${n} shifts`);
+  }
   const cleanTitle = cleanGroupTitle(g.title, g.customer_name);
   return [
     `Hi ${g.customer_name || "there"},`,
@@ -63,6 +104,7 @@ function proposalMessage(g: BookingGroup): string {
     vehicleCount > 0
       ? `🚗 ${vehicleCount} ${vehicleCount === 1 ? "vehicle" : "vehicles"}`
       : null,
+    ...shiftLines,
     `💳 Total: ${g.currency || "ZAR"} ${g.total_client_amount}`,
     `🎫 Reference: ${g.group_reference}`,
     "",
@@ -131,6 +173,8 @@ export default function BookingGroupDetailScreen() {
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+
+  const shifts = computeShifts(groupQuery.data?.bookings ?? []);
 
   if (groupQuery.isLoading) {
     return (
@@ -309,7 +353,9 @@ export default function BookingGroupDetailScreen() {
           />
           <Row
             label="Vehicles"
-            value={group.bookings.length}
+            value={
+              new Set(group.bookings.map((b) => b.car?.id ?? `b${b.id}`)).size
+            }
           />
           {group.notes ? <Row label="Notes" value={group.notes} /> : null}
         </Card.Content>
@@ -336,6 +382,7 @@ export default function BookingGroupDetailScreen() {
             <ChildBookingRow
               key={b.id}
               booking={b}
+              shiftLabel={shifts.get(b.id)}
               index={i}
               isLast={i === group.bookings.length - 1}
               canDetach={!isCancelled && group.bookings.length > 1}
@@ -425,7 +472,7 @@ export default function BookingGroupDetailScreen() {
         defaultEndTime={group.bookings[0]?.days?.[0]?.end_time ?? null}
         defaultPickupLocation={group.bookings[0]?.pickup_location}
         defaultDropoffLocation={group.bookings[0]?.dropoff_location}
-        excludeVehicleIds={group.bookings
+        usedVehicleIds={group.bookings
           .map((b) => b.car?.id)
           .filter((id): id is number => id != null)}
         vehicles={formOptionsQuery.data?.vehicles ?? []}
@@ -439,7 +486,14 @@ export default function BookingGroupDetailScreen() {
             await addBookingMutation.mutateAsync(child);
             setAddVehicleOpen(false);
           } catch (err: unknown) {
-            Alert.alert("Couldn't add vehicle", formatApiError(err));
+            const msg = formatApiError(err);
+            const overlap = /already booked/i.test(msg);
+            Alert.alert(
+              overlap ? "Shift times overlap" : "Couldn't add vehicle",
+              overlap
+                ? `${msg}\n\nChange the shift times so they do not overlap the other shift on this vehicle.`
+                : msg
+            );
           }
         }}
       />
@@ -588,6 +642,7 @@ function ActionButton({
 
 function ChildBookingRow({
   booking,
+  shiftLabel,
   index,
   isLast,
   canDetach,
@@ -595,6 +650,7 @@ function ChildBookingRow({
   onDetach,
 }: {
   booking: Booking;
+  shiftLabel?: string;
   index: number;
   isLast: boolean;
   canDetach: boolean;
@@ -620,6 +676,7 @@ function ChildBookingRow({
       <View style={styles.childBody}>
         <Text style={styles.childTitle} numberOfLines={1}>
           {booking.car?.title ?? "Accommodation only"}
+          {shiftLabel ? `  ·  ${shiftLabel}` : ""}
         </Text>
         <Text style={styles.childMeta} numberOfLines={1}>
           {booking.booking_reference}  ·  {dateLabel}
@@ -627,6 +684,10 @@ function ChildBookingRow({
         {booking.driver?.full_name ? (
           <Text style={styles.childSub} numberOfLines={1}>
             👤 {booking.driver.full_name}
+          </Text>
+        ) : shiftLabel ? (
+          <Text style={styles.childSub} numberOfLines={1}>
+            👤 Driver to be confirmed
           </Text>
         ) : null}
       </View>
