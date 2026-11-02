@@ -51,6 +51,8 @@ import { ShimmerImage } from "@/components/ShimmerImage";
 import { bookingDetailUrl, driverBookingPageUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
 import { AddVehicleSheet } from "@/components/AddVehicleSheet";
+import { DriverChangeSheet } from "@/components/DriverChangeSheet";
+import { bookingCanSplit } from "@/utils/driverChange";
 import { DayScheduleBar } from "@/components/DayScheduleBar";
 import { colors } from "@/theme";
 
@@ -281,6 +283,7 @@ export default function BookingDetailScreen() {
   const driversQuery = useDrivers();
   const [driverMenuOpen, setDriverMenuOpen] = useState(false);
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
+  const [driverChangeOpen, setDriverChangeOpen] = useState(false);
   const formOptionsQuery = useBookingFormOptions();
   // Only used when we need to recover a booking that was converted
   // behind our back — we hit the groups list with the extracted
@@ -781,6 +784,19 @@ export default function BookingDetailScreen() {
                   Add another vehicle
                 </Button>
               ) : null}
+              {bookingCanSplit(booking) ? (
+                <Button
+                  mode="outlined"
+                  onPress={() => setDriverChangeOpen(true)}
+                  style={styles.manageButton}
+                  contentStyle={styles.manageButtonContent}
+                  labelStyle={styles.manageLabel}
+                  textColor={colors.primary}
+                  icon="swap-horizontal"
+                >
+                  Driver change
+                </Button>
+              ) : null}
               <Button
                 mode="outlined"
                 onPress={() =>
@@ -823,6 +839,22 @@ export default function BookingDetailScreen() {
           Pre-fills the sheet with the primary booking's dates / times
           / pickup / dropoff so the common "same tour, second car" flow
           is one tap; operator can tweak any of them for this vehicle. */}
+      {isAdmin ? (
+        <DriverChangeSheet
+          visible={driverChangeOpen}
+          onClose={() => setDriverChangeOpen(false)}
+          booking={booking}
+          groupId={booking.group_id ?? null}
+          onDone={(gid) => {
+            // Standalone bookings were just promoted to a group, so the
+            // group screen is the place to see Shift 1 / Shift 2.
+            if (!booking.group_id) {
+              navigation.replace("BookingGroupDetail", { groupId: gid });
+            }
+          }}
+        />
+      ) : null}
+
       <AddVehicleSheet
         visible={addVehicleOpen}
         onClose={() => setAddVehicleOpen(false)}

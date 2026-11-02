@@ -5,7 +5,12 @@ import {
 } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import * as Notifications from "expo-notifications";
-import { ActivityIndicator, AppState, View } from "react-native";
+import {
+  ActivityIndicator,
+  AppState,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { Button, Text } from "react-native-paper";
 import LoginScreen from "@/screens/LoginScreen";
 import BookingDetailScreen from "@/screens/BookingDetailScreen";
@@ -17,7 +22,6 @@ import BookingCalendarScreen from "@/screens/BookingCalendarScreen";
 import BookingGroupDetailScreen from "@/screens/BookingGroupDetailScreen";
 import InboxConversationScreen from "@/screens/InboxConversationScreen";
 import MailbotSettingsScreen from "@/screens/MailbotSettingsScreen";
-import AssistantScreen from "@/screens/AssistantScreen";
 import DriverListScreen from "@/screens/DriverListScreen";
 import VillaDetailScreen from "@/screens/VillaDetailScreen";
 import VillaEditScreen from "@/screens/VillaEditScreen";
@@ -216,12 +220,52 @@ export default function AppNavigator() {
   return (
     <NavigationContainer ref={navRef} theme={navTheme}>
       <Stack.Navigator
-        screenOptions={{
+        screenOptions={({ navigation }) => ({
           headerStyle: { backgroundColor: colors.primary },
           headerTintColor: colors.onPrimary,
           headerTitleStyle: { fontWeight: "700" },
           contentStyle: { backgroundColor: colors.background },
-        }}
+          // The previous route (Tabs) has no header, so iOS would label the
+          // native back button "Tabs" and it sometimes ignores taps. Use our
+          // own button with a generous hit area that calls goBack().
+          headerBackTitle: "Back",
+          headerLeft: ({ tintColor }: { tintColor?: string }) =>
+            navigation.canGoBack() ? (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 32 }}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+                activeOpacity={0.6}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  minHeight: 44,
+                  minWidth: 64,
+                  paddingRight: 12,
+                }}
+              >
+                <Text
+                  style={{
+                    color: tintColor ?? colors.onPrimary,
+                    fontSize: 30,
+                    lineHeight: 32,
+                    marginRight: 4,
+                  }}
+                >
+                  ‹
+                </Text>
+                <Text
+                  style={{
+                    color: tintColor ?? colors.onPrimary,
+                    fontSize: 17,
+                  }}
+                >
+                  Back
+                </Text>
+              </TouchableOpacity>
+            ) : null,
+        })}
       >
         {!isAuthenticated ? (
           <Stack.Screen
@@ -280,11 +324,6 @@ export default function AppNavigator() {
               name="MailbotSettings"
               component={MailbotSettingsScreen}
               options={{ title: "Mailbot" }}
-            />
-            <Stack.Screen
-              name="Assistant"
-              component={AssistantScreen}
-              options={{ headerShown: false, presentation: "modal" }}
             />
             <Stack.Screen
               name="DriverList"

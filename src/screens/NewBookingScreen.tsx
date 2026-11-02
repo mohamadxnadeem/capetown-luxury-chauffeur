@@ -46,6 +46,7 @@ import type {
 } from "@/api/types";
 import type { RootStackParamList } from "@/navigation/types";
 import { formatApiError } from "@/api/errors";
+import { vehicleLabel } from "@/utils/vehicle";
 import { calendarTheme, colors } from "@/theme";
 
 // Per-day record: each selected date carries its own schedule, description,
@@ -949,7 +950,7 @@ export default function NewBookingScreen() {
                 {form.noVehicle
                   ? "No chauffeur — accommodation only"
                   : selectedVehicle
-                    ? selectedVehicle.title
+                    ? vehicleLabel(selectedVehicle)
                     : "Choose a vehicle"}
               </Button>
             }
@@ -975,7 +976,7 @@ export default function NewBookingScreen() {
                 <Menu.Item
                   key={v.id}
                   onPress={() => pickVehicle(v)}
-                  title={`${v.title}${v.registration_number ? `  ·  ${v.registration_number}` : ""}`}
+                  title={vehicleLabel(v)}
                   leadingIcon={
                     !form.noVehicle && form.vehicleId === v.id
                       ? "check"
@@ -1583,7 +1584,7 @@ function AdditionalVehicleCard({
                 });
                 setVehicleMenuOpen(false);
               }}
-              title={v.title}
+              title={vehicleLabel(v)}
               leadingIcon={entry.vehicleId === v.id ? "check" : undefined}
             />
           ))}

@@ -18,6 +18,7 @@ import type {
   DriverNested,
   Vehicle,
 } from "@/api/types";
+import { vehicleLabel } from "@/utils/vehicle";
 import { calendarTheme, colors } from "@/theme";
 
 interface Props {
@@ -284,7 +285,7 @@ export function AddVehicleSheet({
           >
             <Text style={styles.sheetTitle}>
               {selectedVehicle && usedVehicleIds.includes(selectedVehicle.id)
-                ? `Add another shift for ${selectedVehicle.title}`
+                ? `Add another shift for ${vehicleLabel(selectedVehicle)}`
                 : heading}
             </Text>
             {description ? (
@@ -303,7 +304,7 @@ export function AddVehicleSheet({
                   !selectedVehicle && styles.sheetPickerRowTextMuted,
                 ]}
               >
-                {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
+                {selectedVehicle ? vehicleLabel(selectedVehicle) : "Choose a vehicle"}
               </Text>
               <Text style={styles.sheetPickerChevron}>
                 {vehicleListOpen ? "▴" : "▾"}
@@ -341,7 +342,7 @@ export function AddVehicleSheet({
                             active && styles.sheetInlineOptionTextActive,
                           ]}
                         >
-                          {v.title}
+                          {vehicleLabel(v)}
                         </Text>
                         {active ? (
                           <Text style={styles.sheetInlineOptionCheck}>✓</Text>

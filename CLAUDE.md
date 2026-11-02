@@ -23,8 +23,8 @@ credentials. Uses the app to run the whole operation:
 - Browse the vehicle fleet, villas, hotels, package tours
 - Open the Mailbot Inbox to review and approve AI drafted replies
   to inbound client email and WhatsApp messages
-- Open the voice assistant (mic button on Home) to ask spoken
-  questions about bookings, earnings and drafts
+- Split a vehicle's shift between two drivers ("Driver change") on
+  the booking or group screen
 - Share booking confirmation links and payment links with clients
   via WhatsApp or email
 - Download PDF invoices to send to clients
@@ -44,7 +44,7 @@ those links for the operator to forward.
 ## 2. Stack
 
 - **Framework:** Expo SDK 54, React Native 0.81.5, TypeScript strict
-- **App version:** 0.3.0 (from `app.json`). `runtimeVersion.policy`
+- **App version:** 0.2.0 (from `app.json`). `runtimeVersion.policy`
   is `appVersion` so bumping `app.json` version creates a new OTA
   runtime target
 - **Navigation:** @react-navigation/native 6.1 with
@@ -64,12 +64,6 @@ those links for the operator to forward.
 - **Secure storage:** expo-secure-store 15 for JWT tokens and
   persisted role
 - **Push:** expo-notifications 0.32 with Expo Push tokens
-- **Voice input:** expo-speech-recognition 58 (on-device STT, free,
-  requires microphone and speech recognition permissions)
-- **Voice output:** expo-speech 14 (on-device TTS, free). Prefers
-  the Daniel voice on iOS for a British male voice. The screen
-  queries `Speech.getAvailableVoicesAsync()` and picks the best
-  match at runtime
 - **Clipboard:** expo-clipboard 8 for copying share URLs
 - **Image picker:** expo-image-picker 17 for vehicle, villa, hotel,
   package photo uploads
@@ -117,8 +111,6 @@ hooks, never from components directly.
 - `inbox.ts` Mailbot inbox: list conversations, read conversation,
   approve or reject an AgentAction, operator reply, handoff, link
   booking, kill switch, status
-- `assistant.ts` voice assistant chat endpoint, conversation list,
-  conversation detail, delete
 - `calendar.ts` personal iCal feed token read and rotate
 - `finance.ts` finance summary and graphs
 
@@ -159,7 +151,7 @@ One file per screen. Grouped roughly by domain:
 - `LoginScreen.tsx` username + password, calls `login()`
 - `HomeScreen.tsx` admin home. Hero, Calendar tile, "Upcoming
   this week" section, bookings list with status filter chips,
-  mic FAB for the voice assistant, "+" FAB for new booking
+  "+" FAB for new booking
 - `NewBookingScreen.tsx` single screen that serves both the Create
   Booking and Edit Booking flows (distinguished by whether
   `route.params.bookingId` is set). Includes "Additional vehicles"
@@ -198,15 +190,6 @@ One file per screen. Grouped roughly by domain:
   bubbles, operator reply composer, hand off button
 - `MailbotSettingsScreen.tsx` kill switch, Gmail connected status,
   Gmail watch expiry, drafts pending count, help copy
-- `AssistantScreen.tsx` modal voice chat. Live transcript overlay
-  while recording, chat log with user and assistant bubbles, big
-  mic button, text input fallback, example chips when empty.
-  expo-speech plays the agent's replies aloud. Hands-free toggle
-  loops listen, send, speak, listen; stops on tap, leaving the
-  screen, app backgrounding, an error or a silent turn. Status pill
-  shows Listening / Thinking / Speaking. History icon opens a sheet
-  of past conversations (open, delete with confirm). Chat call uses
-  a 90s timeout; backend `detail` is shown for 400/502/503
 - `FinanceScreen.tsx` revenue summary, graphs
 - `DriverListScreen.tsx` driver management
 - `ProfileScreen.tsx` sign out, Drivers nav row, Packages nav row,
@@ -224,7 +207,7 @@ One file per screen. Grouped roughly by domain:
   the detail-level stack screens (BookingDetail, BookingEdit,
   VehicleDetail, VehicleEdit, VehicleSearch, BookingCalendar,
   BookingGroupDetail, InboxConversation, MailbotSettings,
-  Assistant, DriverList, VillaDetail, VillaEdit, HotelDetail,
+  DriverList, VillaDetail, VillaEdit, HotelDetail,
   HotelEdit, PackageList, PackageEdit, NewBooking). Also owns the
   cold-start bootstrap (`detectRole()`), the push notification
   deep-link handler and the hard auth failure handler
@@ -421,15 +404,6 @@ method the backend supports.
 - POST `/api/admin/mailbot/kill-switch/` (body: `{ enabled }`)
 - GET  `/api/admin/mailbot/status/`
 
-**Admin: voice assistant** (endpoint built by backend Claude in
-parallel to the mobile side):
-
-- POST `/api/admin/assistant/chat/` (body: `{ message,
-  conversation_id? }`)
-- GET  `/api/admin/assistant/conversations/`
-- GET  `/api/admin/assistant/conversations/<id>/`
-- DELETE `/api/admin/assistant/conversations/<id>/`
-
 **Admin: calendar feed:**
 
 - GET  `/api/admin/calendar-token/`
@@ -476,8 +450,8 @@ npx expo start --dev-client     # if you have a dev build installed
 ```
 
 Prerequisite: a dev build installed on your test device (not Expo
-Go) because the project uses `expo-notifications`, `expo-secure-store`
-and `expo-speech-recognition` which are native modules. The current
+Go) because the project uses `expo-notifications` and
+`expo-secure-store` which are native modules. The current
 Expo Go version is also usually mismatched to this app's SDK.
 
 ### Type check
@@ -627,10 +601,7 @@ flight.
 Everything the AI mailbot produces (reply drafts, booking drafts)
 is DRAFT ONLY. Nothing is ever sent or committed to a client until
 the operator approves it from InboxConversationScreen. Do NOT add
-an auto-send path. The voice assistant follows the same rule: Phase
-1 is READ-ONLY (answers only, cannot act). If future phases add
-drafting via voice, they also go through the operator approval
-flow in the Inbox.
+an auto-send path.
 
 ### Multiple pending drafts in one conversation
 
@@ -695,14 +666,31 @@ If you see the Calendar lighting up every date between a non-
 contiguous booking's first and last day again, backend has regressed
 on including days[] in the list payload.
 
-### Voice assistant native build
+### Driver change (split a shift between two drivers)
 
-The voice assistant (`AssistantScreen.tsx`) requires
-`expo-speech-recognition` and `expo-speech`. These are native
-modules; an OTA alone will not deliver them to a build that lacks
-them. If an operator reports the AssistantScreen crashing on open
-or the mic button doing nothing, verify they are on a build >= 0.3.0
-(the version bump that added these modules).
+A shift is a separate CarBooking for the same car inside a
+BookingGroup. "Driver change" (`DriverChangeSheet.tsx`, logic in
+`hooks/useDriverChange.ts` and `utils/driverChange.ts`) is offered on
+each group row (BookingGroupDetailScreen) and on BookingDetailScreen
+(admin, booking has a car and timed days). Inputs: change time
+(HH:MM text), new driver, which days, new shift client rate
+(default 0) and driver rate (default the original's). Order of calls:
+convert-to-group first if standalone, then PATCH the original's
+`days` (end_time = change time), then add-booking for the new shift,
+and if that add fails the original `days` are restored. Shorten comes
+BEFORE add because the backend rejects overlapping windows on one
+car (touching windows are fine). A change time after midnight on an
+overnight shift becomes a shift on the next date. Errors say which
+state things were left in. Shifts then show as Shift 1 / Shift 2 via
+`computeShifts`.
+
+### Version is 0.2.0 again
+
+The assistant/voice feature and its native packages were removed and
+`app.json` version is back to 0.2.0, so OTA updates reach the
+installed 0.2.0 store build. `package.json` and the lockfile must
+stay identical to commit abf739d. Do not add native modules or bump
+the version without a new store build.
 
 ## 7. How to work
 
@@ -754,6 +742,10 @@ format.
 
 ### 2026-11-02
 
+- Removed the AI assistant and voice feature, restored native config
+  and version 0.2.0 (OTA-safe for the installed build). Added Driver
+  change (split a vehicle shift between two drivers), vehicle pickers
+  show name + number plate, and a reliable Back button in the stack
 - Group detail: same vehicle can be added again as another shift (Shift 1/2 labels with driver, share message counts distinct vehicles, overlap error shown clearly).
 
 ### 2026-10-31
