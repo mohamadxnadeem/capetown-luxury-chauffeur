@@ -15,6 +15,7 @@ import { useVehiclesAvailable } from "@/hooks/useBookings";
 import type { VehicleAvailabilityEntry } from "@/api/types";
 import type { RootStackParamList } from "@/navigation/types";
 import { ShimmerImage } from "@/components/ShimmerImage";
+import { vehicleLabel } from "@/utils/vehicle";
 import { calendarTheme, colors } from "@/theme";
 
 function pad(n: number): string {
@@ -216,10 +217,10 @@ function VehicleResultCard({
       />
       <View style={styles.cardBody}>
         <Text style={styles.cardTitle} numberOfLines={1}>
-          {v.title}
+          {vehicleLabel(v)}
         </Text>
         <Text style={styles.cardMeta} numberOfLines={1}>
-          {v.registration_number || v.vehicle_type}
+          {v.vehicle_type}
           {entry.driver?.full_name ? `  ·  ${entry.driver.full_name}` : ""}
         </Text>
         {flagged && entry.reason ? (
