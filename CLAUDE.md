@@ -23,8 +23,7 @@ credentials. Uses the app to run the whole operation:
 - Browse the vehicle fleet, villas, hotels, package tours
 - Open the Mailbot Inbox to review and approve AI drafted replies
   to inbound client email and WhatsApp messages
-- Split a vehicle's shift between two drivers ("Driver change") on
-  the booking or group screen
+- Assign a driver per day and split a day into two shifts on one booking
 - Share booking confirmation links and payment links with clients
   via WhatsApp or email
 - Download PDF invoices to send to clients
@@ -133,6 +132,7 @@ Reusable UI, no business logic:
   standalone booking) and the add-to-group flow (from an existing
   group). Includes an inline calendar for per-vehicle date
   selection
+- `DayEditSheet.tsx`, `SplitShiftSheet.tsx`, `DriverSelect.tsx` day time edit, split shift and driver picker sheets
 - `DayScheduleBar.tsx` horizontal 00:00 to 24:00 timeline bar used
   on booking details. Supports `endNextDay` (block runs off the
   right edge) and `morningTailEndTime` (translucent block at the
@@ -666,23 +666,21 @@ If you see the Calendar lighting up every date between a non-
 contiguous booking's first and last day again, backend has regressed
 on including days[] in the list payload.
 
-### Driver change (split a shift between two drivers)
+### Day drivers and split shifts (one booking)
 
-A shift is a separate CarBooking for the same car inside a
-BookingGroup. "Driver change" (`DriverChangeSheet.tsx`, logic in
-`hooks/useDriverChange.ts` and `utils/driverChange.ts`) is offered on
-each group row (BookingGroupDetailScreen) and on BookingDetailScreen
-(admin, booking has a car and timed days). Inputs: change time
-(HH:MM text), new driver, which days, new shift client rate
-(default 0) and driver rate (default the original's). Order of calls:
-convert-to-group first if standalone, then PATCH the original's
-`days` (end_time = change time), then add-booking for the new shift,
-and if that add fails the original `days` are restored. Shorten comes
-BEFORE add because the backend rejects overlapping windows on one
-car (touching windows are fine). A change time after midnight on an
-overnight shift becomes a shift on the next date. Errors say which
-state things were left in. Shifts then show as Shift 1 / Shift 2 via
-`computeShifts`.
+A day row (`BookingDay`) may carry its own `driver` (null = booking
+driver). `effective_driver` is `{id, full_name}`; older backends omit
+these fields, so helpers in `src/utils/dayShifts.ts` fall back to the
+booking driver. A split day is two day rows with the same date on the
+same booking, ordered by start time (Shift 1 / Shift 2). Split shift
+(`POST /api/admin/booking-days/<id>/split/`, `{split_time, driver?,
+client_rate?, driver_rate?}`) is offered on `full_day` rows over 8h
+(counting `end_next_day`); the sheet defaults to the window midpoint
+rounded to 30 minutes. Remove split deletes the second row then PATCHes
+the first row's end (`mergeBackPatch`). Pure logic is tested with
+`node scripts/check-day-shifts.js`. The old separate-booking "Driver
+change" was removed; shifts made that way stay as group children and
+still show Shift 1 / Shift 2 in the group screen.
 
 ### Version is 0.2.0 again
 
@@ -739,6 +737,18 @@ the version without a new store build.
 
 Newest first. Add new entries at the top with the date in ISO
 format.
+
+### 2026-11-03
+
+- Per-day drivers and split shifts on ONE booking (contract
+  2026-11-02-day-drivers-split-shifts). Driver picker, Edit times, Split
+  shift (full_day over 8h) and Remove split on each day row of
+  BookingDetailScreen; split days draw one two-colour DayScheduleBar
+  (shift 1 primary, shift 2 `colors.shiftTwo`) with driver names, also on
+  the calendar day list; "Send to <driver>" sends only that driver's days.
+  Removed the separate-booking Driver change feature. Calls
+  PATCH `/api/admin/booking-days/<id>/update/`, DELETE `.../delete/`,
+  POST `.../split/`. Needs the backend deployed first. JS only, OTA
 
 ### 2026-11-02
 

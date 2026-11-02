@@ -51,10 +51,90 @@ import { ShimmerImage } from "@/components/ShimmerImage";
 import { bookingDetailUrl, driverBookingPageUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
 import { AddVehicleSheet } from "@/components/AddVehicleSheet";
-import { DriverChangeSheet } from "@/components/DriverChangeSheet";
-import { bookingCanSplit } from "@/utils/driverChange";
-import { DayScheduleBar } from "@/components/DayScheduleBar";
+import { DayScheduleBar, type BarShift } from "@/components/DayScheduleBar";
+import { DayEditSheet } from "@/components/DayEditSheet";
+import { SplitShiftSheet } from "@/components/SplitShiftSheet";
+import { useUpdateDay, useRemoveSplit } from "@/hooks/useBookingDays";
+import {
+  canSplitDay,
+  distinctDrivers,
+  driverDays,
+  effectiveDriver,
+  hhmm,
+  shiftIndexByDayId,
+  sortDays,
+  splitPartner,
+} from "@/utils/dayShifts";
 import { colors } from "@/theme";
+
+const shiftColor = (i: number) => (i === 0 ? colors.primary : colors.shiftTwo);
+
+function DayDriverMenu({
+  day,
+  bookingDriverName,
+  effectiveName,
+  drivers,
+  disabled,
+  onPick,
+}: {
+  day: BookingDay;
+  bookingDriverName: string | null;
+  effectiveName: string | null;
+  drivers: DriverNested[];
+  disabled?: boolean;
+  onPick: (id: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const own = day.driver ?? null;
+  const label =
+    own != null
+      ? day.driver_name ?? effectiveName ?? "Driver"
+      : bookingDriverName
+        ? `Booking driver (${bookingDriverName})`
+        : "Booking driver";
+  return (
+    <Menu
+      visible={open}
+      onDismiss={() => setOpen(false)}
+      anchor={
+        <TouchableOpacity
+          onPress={() => setOpen(true)}
+          disabled={disabled}
+          activeOpacity={0.85}
+          style={styles.dayDriverButton}
+        >
+          <Text style={styles.dayDriverText} numberOfLines={1}>
+            👤 {label} ▾
+          </Text>
+        </TouchableOpacity>
+      }
+    >
+      <Menu.Item
+        onPress={() => {
+          setOpen(false);
+          onPick(null);
+        }}
+        title={
+          bookingDriverName
+            ? `Booking driver (${bookingDriverName})`
+            : "Booking driver"
+        }
+        leadingIcon={own == null ? "check" : undefined}
+      />
+      {drivers.map((d) => (
+        <Menu.Item
+          key={d.id}
+          onPress={() => {
+            setOpen(false);
+            onPick(d.id);
+          }}
+          title={d.full_name}
+          leadingIcon={own === d.id ? "check" : undefined}
+        />
+      ))}
+    </Menu>
+  );
+}
 
 // ---- Helpers ------------------------------------------------------------
 
@@ -87,7 +167,11 @@ interface ScheduleRow {
   // The booking's actual day row for this date, or null when this row
   // is a synthetic tail-only entry (previous day's overnight ends here
   // but this date isn't itself a scheduled day).
-  day: BookingDay | null;
+  // Every shift on this date (empty for a synthetic tail-only row), ordered
+  // by start time. Two entries = a split day on one booking.
+  days: BookingDay[];
+  // Colour index (0 = first shift) of the shift the tail comes from.
+  tailShiftIndex: number;
   // When set, means a previous day's end_next_day shift ends at this
   // time on this date. Used to render the morning tail block in
   // DayScheduleBar.
@@ -103,18 +187,20 @@ interface ScheduleRow {
 // tail is attached to that row (the DayScheduleBar renders both the tail
 // and the day's own shift).
 function buildScheduleRows(days: BookingDay[]): ScheduleRow[] {
-  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = sortDays(days);
+  const shiftIdx = shiftIndexByDayId(days);
   // Map so a date touched twice (synthetic tail row later promoted to
   // a real day row, or vice versa) still ends up as a single entry.
   const rows = new Map<string, ScheduleRow>();
   for (const d of sorted) {
     const existing = rows.get(d.date);
     if (existing) {
-      existing.day = d;
+      existing.days.push(d);
     } else {
       rows.set(d.date, {
         date: d.date,
-        day: d,
+        days: [d],
+        tailShiftIndex: 0,
         tailEndTime: null,
         tailFromDate: null,
       });
@@ -125,10 +211,12 @@ function buildScheduleRows(days: BookingDay[]): ScheduleRow[] {
       if (next) {
         next.tailEndTime = d.end_time;
         next.tailFromDate = d.date;
+        next.tailShiftIndex = shiftIdx.get(d.id) ?? 0;
       } else {
         rows.set(nextDate, {
           date: nextDate,
-          day: null,
+          days: [],
+          tailShiftIndex: shiftIdx.get(d.id) ?? 0,
           tailEndTime: d.end_time,
           tailFromDate: d.date,
         });
@@ -158,22 +246,41 @@ function clientMessage(b: Booking): string {
     .join("\n");
 }
 
-function driverMessage(b: Booking): string {
+// Trip details for ONE driver: lists only the days and times they drive.
+// With no `driver` it falls back to the booking driver and the whole booking.
+function driverMessage(
+  b: Booking,
+  driver?: { id: number; full_name: string } | null
+): string {
+  const own = driver ? driverDays(b, driver.id) : [];
+  const useDays = own.length > 0 ? own : sortDays(b.days ?? []);
   const [start, end] = bookingDateRange(b);
   const dateRange = start === end ? start : `${start} → ${end}`;
-  const firstDay = b.days?.[0];
-  const timeLine = firstDay?.start_time
-    ? `🕒 ${firstDay.start_time.slice(0, 5)}${
-        firstDay.end_time ? ` – ${firstDay.end_time.slice(0, 5)}` : ""
-      }`
-    : null;
+  const timed = useDays.filter((d) => d.start_time);
+  const timeLines: (string | null)[] =
+    own.length > 0 && timed.length > 0
+      ? timed.map(
+          (d) =>
+            `🕒 ${d.date}  ${hhmm(d.start_time)}${
+              d.end_time
+                ? ` - ${hhmm(d.end_time)}${d.end_next_day ? " (next day)" : ""}`
+                : ""
+            }`
+        )
+      : [
+          useDays[0]?.start_time
+            ? `🕒 ${hhmm(useDays[0].start_time)}${
+                useDays[0].end_time ? ` - ${hhmm(useDays[0].end_time)}` : ""
+              }`
+            : null,
+        ];
   return [
-    `Hi ${b.driver?.full_name || "there"},`,
+    `Hi ${driver?.full_name || b.driver?.full_name || "there"},`,
     "",
     `You've been assigned a new trip with Cape Town Concierge.`,
     "",
-    `📅 ${dateRange}`,
-    timeLine,
+    own.length > 0 && timed.length > 0 ? null : `📅 ${dateRange}`,
+    ...timeLines,
     `🚗 ${b.car?.title ?? "Vehicle"}`,
     `👤 Customer: ${b.customer_name || "—"}`,
     b.customer_phone ? `📞 ${b.customer_phone}` : null,
@@ -283,12 +390,49 @@ export default function BookingDetailScreen() {
   const driversQuery = useDrivers();
   const [driverMenuOpen, setDriverMenuOpen] = useState(false);
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
-  const [driverChangeOpen, setDriverChangeOpen] = useState(false);
+  const [editDay, setEditDay] = useState<BookingDay | null>(null);
+  const [splitDayRow, setSplitDayRow] = useState<BookingDay | null>(null);
+  const updateDay = useUpdateDay(booking?.id);
+  const removeSplit = useRemoveSplit(booking?.id);
   const formOptionsQuery = useBookingFormOptions();
   // Only used when we need to recover a booking that was converted
   // behind our back — we hit the groups list with the extracted
   // group_reference and navigate the operator to the real group screen.
   const allGroupsQuery = useAdminBookingGroups();
+
+  async function assignDayDriver(day: BookingDay, driverId: number | null) {
+    try {
+      await updateDay.mutateAsync({ id: day.id, patch: { driver: driverId } });
+    } catch (err: unknown) {
+      Alert.alert("Couldn't assign driver", formatApiError(err));
+    }
+  }
+
+  function confirmRemoveSplit(first: BookingDay, second: BookingDay) {
+    Alert.alert(
+      "Remove split?",
+      `The second shift (${hhmm(second.start_time)} - ${hhmm(second.end_time)}) is deleted and the first shift runs to ${hhmm(second.end_time)}.`,
+      [
+        { text: "Keep", style: "cancel" },
+        {
+          text: "Remove split",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await removeSplit.mutateAsync({ first, second });
+            } catch (err: unknown) {
+              Alert.alert(
+                "Couldn't remove the split",
+                err instanceof Error && !("response" in err)
+                  ? err.message
+                  : formatApiError(err)
+              );
+            }
+          },
+        },
+      ]
+    );
+  }
 
   async function assignDriver(driverId: number | null) {
     setDriverMenuOpen(false);
@@ -326,6 +470,8 @@ export default function BookingDetailScreen() {
   const isCancelled = booking.status === "cancelled";
 
   const clientDigits = digitsOnly(booking.customer_phone);
+  const bookingDrivers = distinctDrivers(booking);
+  const isMultiDriver = bookingDrivers.length > 1;
   const driverDigits = digitsOnly(
     booking.driver?.whatsapp ?? booking.driver?.phone
   );
@@ -452,7 +598,7 @@ export default function BookingDetailScreen() {
         {isAdmin &&
         !isCancelled &&
         booking.booking_reference &&
-        (clientDigits || driverDigits) ? (
+        (clientDigits || driverDigits || isMultiDriver) ? (
           <View style={styles.actionsRow}>
             {clientDigits ? (
               <ActionButton
@@ -463,15 +609,36 @@ export default function BookingDetailScreen() {
                 }
               />
             ) : null}
-            {driverDigits ? (
-              <ActionButton
-                icon="whatsapp"
-                label="Send to driver"
-                onPress={() =>
-                  openWhatsApp(driverDigits, driverMessage(booking))
-                }
-              />
-            ) : null}
+            {isMultiDriver
+              ? bookingDrivers.map((dr) => {
+                  const full = (driversQuery.data ?? []).find(
+                    (x) => x.id === dr.id
+                  );
+                  const digits = digitsOnly(full?.whatsapp ?? full?.phone);
+                  if (!digits) return null;
+                  return (
+                    <ActionButton
+                      key={dr.id}
+                      icon="whatsapp"
+                      label={`Send to ${dr.full_name.split(" ")[0]}`}
+                      onPress={() =>
+                        openWhatsApp(digits, driverMessage(booking, dr))
+                      }
+                    />
+                  );
+                })
+              : driverDigits ? (
+                  <ActionButton
+                    icon="whatsapp"
+                    label="Send to driver"
+                    onPress={() =>
+                      openWhatsApp(
+                        driverDigits,
+                        driverMessage(booking, bookingDrivers[0] ?? null)
+                      )
+                    }
+                  />
+                ) : null}
             {/* Payment link only renders when the backend has created the Yoco
                 link AND the booking hasn't been paid yet. */}
             {clientDigits && booking.payment_link && !booking.is_paid ? (
@@ -672,44 +839,123 @@ export default function BookingDetailScreen() {
           <Card style={styles.card} mode="elevated">
             <Card.Content>
               <SectionLabel>Schedule</SectionLabel>
-              {buildScheduleRows(days).map((row, i) => (
-                <View
-                  key={row.date}
-                  style={[styles.dayBlock, i === 0 && styles.dayBlockFirst]}
-                >
-                  <View style={styles.dayBlockHeader}>
-                    <View style={styles.dayBullet}>
-                      <Text style={styles.dayBulletText}>{i + 1}</Text>
+              {buildScheduleRows(days).map((row, i) => {
+                const shiftIdx = shiftIndexByDayId(days);
+                const isSplit = row.days.length > 1;
+                const single = row.days[0] ?? null;
+                const shifts: BarShift[] = row.days.map((d) => ({
+                  startTime: d.start_time,
+                  endTime: d.end_time,
+                  endNextDay: !!d.end_next_day,
+                  color: shiftColor(shiftIdx.get(d.id) ?? 0),
+                  label: `Shift ${(shiftIdx.get(d.id) ?? 0) + 1}`,
+                  driverName: effectiveDriver(d, booking)?.full_name ?? null,
+                }));
+                return (
+                  <View
+                    key={row.date}
+                    style={[styles.dayBlock, i === 0 && styles.dayBlockFirst]}
+                  >
+                    <View style={styles.dayBlockHeader}>
+                      <View style={styles.dayBullet}>
+                        <Text style={styles.dayBulletText}>{i + 1}</Text>
+                      </View>
+                      <Text style={styles.dayDate}>{row.date}</Text>
+                      {isSplit ? (
+                        <Text style={styles.overnightBadge}>SPLIT</Text>
+                      ) : null}
+                      {row.days.some((d) => d.end_next_day) ? (
+                        <Text style={styles.overnightBadge}>🌙 OVERNIGHT</Text>
+                      ) : null}
+                      {row.tailFromDate && row.days.length === 0 ? (
+                        <Text style={styles.overnightBadge}>🌙 TAIL</Text>
+                      ) : null}
                     </View>
-                    <Text style={styles.dayDate}>{row.date}</Text>
-                    {row.day?.end_next_day ? (
-                      <Text style={styles.overnightBadge}>🌙 OVERNIGHT</Text>
+                    <DayScheduleBar
+                      startTime={single?.start_time ?? null}
+                      endTime={single?.end_time ?? null}
+                      endNextDay={!!single?.end_next_day}
+                      morningTailEndTime={row.tailEndTime ?? null}
+                      morningTailColor={shiftColor(row.tailShiftIndex)}
+                      shifts={isSplit ? shifts : undefined}
+                    />
+                    {row.days.map((d) => {
+                      const eff = effectiveDriver(d, booking);
+                      const idx = shiftIdx.get(d.id) ?? 0;
+                      const partner = splitPartner(d, days);
+                      return (
+                        <View key={d.id} style={styles.shiftControls}>
+                          {isSplit ? (
+                            <View
+                              style={[
+                                styles.shiftDot,
+                                { backgroundColor: shiftColor(idx) },
+                              ]}
+                            />
+                          ) : null}
+                          {isAdmin && !isCancelled ? (
+                            <DayDriverMenu
+                              day={d}
+                              bookingDriverName={booking.driver?.full_name ?? null}
+                              effectiveName={eff?.full_name ?? null}
+                              drivers={(driversQuery.data ?? []).filter(
+                                (x) => x.is_active
+                              )}
+                              disabled={updateDay.isPending}
+                              onPick={(id) => assignDayDriver(d, id)}
+                            />
+                          ) : eff && !isSplit ? (
+                            <Text style={styles.dayDriverText}>
+                              👤 {eff.full_name}
+                            </Text>
+                          ) : null}
+                          {isAdmin && !isCancelled ? (
+                            <View style={styles.shiftLinks}>
+                              <TouchableOpacity onPress={() => setEditDay(d)}>
+                                <Text style={styles.shiftLink}>Edit times</Text>
+                              </TouchableOpacity>
+                              {canSplitDay(d) ? (
+                                <TouchableOpacity
+                                  onPress={() => setSplitDayRow(d)}
+                                >
+                                  <Text style={styles.shiftLink}>
+                                    Split shift
+                                  </Text>
+                                </TouchableOpacity>
+                              ) : null}
+                              {partner ? (
+                                <TouchableOpacity
+                                  onPress={() => confirmRemoveSplit(partner, d)}
+                                  disabled={removeSplit.isPending}
+                                >
+                                  <Text style={styles.shiftLink}>
+                                    Remove split
+                                  </Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                    {single?.end_next_day ? (
+                      <Text style={styles.dayOvernight}>
+                        Continues to {single.end_time?.slice(0, 5) ?? ""} on {addOneIsoDay(row.date)}
+                      </Text>
                     ) : null}
-                    {row.tailFromDate && !row.day ? (
-                      <Text style={styles.overnightBadge}>🌙 TAIL</Text>
+                    {row.tailFromDate ? (
+                      <Text style={styles.dayOvernight}>
+                        ← Carrying over from {row.tailFromDate} until {row.tailEndTime?.slice(0, 5) ?? ""}
+                      </Text>
                     ) : null}
+                    {row.days.map((d) =>
+                      d.notes ? (
+                        <Text key={`n${d.id}`} style={styles.dayNote}>{d.notes}</Text>
+                      ) : null
+                    )}
                   </View>
-                  <DayScheduleBar
-                    startTime={row.day?.start_time ?? null}
-                    endTime={row.day?.end_time ?? null}
-                    endNextDay={!!row.day?.end_next_day}
-                    morningTailEndTime={row.tailEndTime ?? null}
-                  />
-                  {row.day?.end_next_day ? (
-                    <Text style={styles.dayOvernight}>
-                      Continues to {row.day?.end_time?.slice(0, 5) ?? ""} on {addOneIsoDay(row.date)}
-                    </Text>
-                  ) : null}
-                  {row.tailFromDate ? (
-                    <Text style={styles.dayOvernight}>
-                      ← Carrying over from {row.tailFromDate} until {row.tailEndTime?.slice(0, 5) ?? ""}
-                    </Text>
-                  ) : null}
-                  {row.day?.notes ? (
-                    <Text style={styles.dayNote}>{row.day.notes}</Text>
-                  ) : null}
-                </View>
-              ))}
+                );
+              })}
             </Card.Content>
           </Card>
         ) : null}
@@ -784,19 +1030,6 @@ export default function BookingDetailScreen() {
                   Add another vehicle
                 </Button>
               ) : null}
-              {bookingCanSplit(booking) ? (
-                <Button
-                  mode="outlined"
-                  onPress={() => setDriverChangeOpen(true)}
-                  style={styles.manageButton}
-                  contentStyle={styles.manageButtonContent}
-                  labelStyle={styles.manageLabel}
-                  textColor={colors.primary}
-                  icon="swap-horizontal"
-                >
-                  Driver change
-                </Button>
-              ) : null}
               <Button
                 mode="outlined"
                 onPress={() =>
@@ -840,19 +1073,22 @@ export default function BookingDetailScreen() {
           / pickup / dropoff so the common "same tour, second car" flow
           is one tap; operator can tweak any of them for this vehicle. */}
       {isAdmin ? (
-        <DriverChangeSheet
-          visible={driverChangeOpen}
-          onClose={() => setDriverChangeOpen(false)}
-          booking={booking}
-          groupId={booking.group_id ?? null}
-          onDone={(gid) => {
-            // Standalone bookings were just promoted to a group, so the
-            // group screen is the place to see Shift 1 / Shift 2.
-            if (!booking.group_id) {
-              navigation.replace("BookingGroupDetail", { groupId: gid });
-            }
-          }}
-        />
+        <>
+          <DayEditSheet
+            visible={editDay != null}
+            onClose={() => setEditDay(null)}
+            bookingId={booking.id}
+            day={editDay}
+          />
+          <SplitShiftSheet
+            visible={splitDayRow != null}
+            onClose={() => setSplitDayRow(null)}
+            bookingId={booking.id}
+            day={splitDayRow}
+            drivers={(driversQuery.data ?? []).filter((d) => d.is_active)}
+            bookingDriverName={booking.driver?.full_name ?? null}
+          />
+        </>
       ) : null}
 
       <AddVehicleSheet
@@ -1100,6 +1336,24 @@ function Row({
 // ---- Styles -------------------------------------------------------------
 
 const styles = StyleSheet.create({
+  shiftControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    marginTop: 8,
+    gap: 10,
+  },
+  shiftDot: { width: 10, height: 10, borderRadius: 5 },
+  dayDriverButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  dayDriverText: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  shiftLinks: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
+  shiftLink: { color: colors.primary, fontWeight: "700", fontSize: 13 },
   scroll: { flex: 1, backgroundColor: colors.background },
   container: { paddingBottom: 32 },
   center: {

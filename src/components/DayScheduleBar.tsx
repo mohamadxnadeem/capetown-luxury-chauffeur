@@ -16,6 +16,19 @@ interface Props {
   // block from 00:00 → that time. The tail renders slightly muted so it
   // reads as "carrying over" rather than a native shift on this date.
   morningTailEndTime?: string | null;
+  morningTailColor?: string;
+  // Split days: every shift of this date, drawn on ONE bar in its own
+  // colour with the driver name in the legend. Overrides startTime/endTime.
+  shifts?: BarShift[];
+}
+
+export interface BarShift {
+  startTime: string | null;
+  endTime: string | null;
+  endNextDay?: boolean;
+  color: string;
+  label?: string; // e.g. "Shift 1"
+  driverName?: string | null;
 }
 
 // Full-day visible window — needed to show the midnight boundary for
@@ -58,7 +71,18 @@ export function DayScheduleBar({
   endTime,
   endNextDay,
   morningTailEndTime,
+  morningTailColor,
+  shifts,
 }: Props) {
+  if (shifts && shifts.length > 1) {
+    return (
+      <MultiShiftBar
+        shifts={shifts}
+        morningTailEndTime={morningTailEndTime}
+        morningTailColor={morningTailColor}
+      />
+    );
+  }
   const startH = toHours(startTime);
   const endH = toHours(endTime);
   const tailEndH = toHours(morningTailEndTime);
@@ -115,6 +139,7 @@ export function DayScheduleBar({
             style={[
               styles.tailBlock,
               { left: `0%`, width: `${Math.max(tailWidth, 2)}%` },
+              morningTailColor ? { backgroundColor: morningTailColor } : null,
             ]}
           />
         ) : null}
@@ -168,7 +193,79 @@ export function DayScheduleBar({
   );
 }
 
+function MultiShiftBar({
+  shifts,
+  morningTailEndTime,
+  morningTailColor,
+}: {
+  shifts: BarShift[];
+  morningTailEndTime?: string | null;
+  morningTailColor?: string;
+}) {
+  const ticks: number[] = [];
+  for (let h = WINDOW_START + 3; h < WINDOW_END; h += 3) ticks.push(h);
+  const tailEndH = toHours(morningTailEndTime);
+  return (
+    <View style={styles.wrap}>
+      <View style={styles.track}>
+        {ticks.map((h) => (
+          <View key={h} style={[styles.tick, { left: `${pct(h)}%` }]} />
+        ))}
+        {tailEndH != null && tailEndH > 0 ? (
+          <View
+            style={[
+              styles.tailBlock,
+              { left: "0%", width: `${Math.max(pct(tailEndH), 2)}%` },
+              morningTailColor ? { backgroundColor: morningTailColor } : null,
+            ]}
+          />
+        ) : null}
+        {shifts.map((sh, i) => {
+          const s = toHours(sh.startTime);
+          const e = toHours(sh.endTime);
+          if (s == null) return null;
+          const overnight = !!sh.endNextDay || (e != null && e < s);
+          const end = e == null ? null : overnight ? WINDOW_END : e;
+          const left = pct(s);
+          const width = end == null ? 1 : Math.max(pct(end) - left, 2);
+          return (
+            <View
+              key={i}
+              style={[
+                styles.block,
+                { left: `${left}%`, width: `${width}%`, backgroundColor: sh.color },
+                // A hairline gap so touching shifts read as two blocks.
+                { borderWidth: 1, borderColor: colors.surface },
+                overnight && end != null
+                  ? { borderTopRightRadius: 0, borderBottomRightRadius: 0 }
+                  : null,
+              ]}
+            />
+          );
+        })}
+      </View>
+      <View style={styles.legend}>
+        {shifts.map((sh, i) => (
+          <View key={i} style={styles.legendRow}>
+            <View style={[styles.legendDot, { backgroundColor: sh.color }]} />
+            <Text style={styles.legendText} numberOfLines={1}>
+              {sh.label ? `${sh.label}  ` : ""}
+              {hhmm(sh.startTime)} - {hhmm(sh.endTime)}
+              {sh.endNextDay ? " (next day)" : ""}
+              {sh.driverName ? `  ·  ${sh.driverName}` : ""}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  legend: { marginTop: 6, gap: 3 },
+  legendRow: { flexDirection: "row", alignItems: "center" },
+  legendDot: { width: 10, height: 10, borderRadius: 5, marginRight: 6 },
+  legendText: { color: colors.heading, fontSize: 12, fontWeight: "600", flexShrink: 1 },
   wrap: { marginTop: 8 },
   track: {
     height: 26,

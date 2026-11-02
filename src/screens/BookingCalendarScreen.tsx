@@ -11,6 +11,8 @@ import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useAdminBookings } from "@/hooks/useBookings";
 import { bookingDateRange, type Booking } from "@/api/types";
+import { DayScheduleBar } from "@/components/DayScheduleBar";
+import { effectiveDriver, shiftIndexByDayId } from "@/utils/dayShifts";
 import { ShimmerImage } from "@/components/ShimmerImage";
 import type { RootStackParamList } from "@/navigation/types";
 import { calendarTheme, colors } from "@/theme";
@@ -184,6 +186,9 @@ export default function BookingCalendarScreen() {
       ) : (
         orderedDayBookings.map((b) => {
           const day = b.days?.find((d) => d.date === selectedDate);
+          const dateDays = (b.days ?? []).filter((d) => d.date === selectedDate);
+          const shiftIdx = shiftIndexByDayId(b.days ?? []);
+          const dayDriver = day ? effectiveDriver(day, b) : null;
           const startTime = day?.start_time
             ? day.start_time.slice(0, 5)
             : b.days?.[0]?.start_time?.slice(0, 5) ?? "—";
@@ -225,10 +230,27 @@ export default function BookingCalendarScreen() {
                 </Text>
                 <Text style={styles.dayRowMeta} numberOfLines={1}>
                   {b.car?.title ?? "No vehicle"}
-                  {b.driver?.full_name
-                    ? `  ·  ${b.driver.full_name}`
+                  {dateDays.length <= 1 && (dayDriver?.full_name ?? b.driver?.full_name)
+                    ? `  ·  ${dayDriver?.full_name ?? b.driver?.full_name}`
                     : ""}
                 </Text>
+                {dateDays.length > 1 ? (
+                  <DayScheduleBar
+                    startTime={null}
+                    endTime={null}
+                    shifts={dateDays.map((d) => ({
+                      startTime: d.start_time,
+                      endTime: d.end_time,
+                      endNextDay: !!d.end_next_day,
+                      color:
+                        (shiftIdx.get(d.id) ?? 0) === 0
+                          ? colors.primary
+                          : colors.shiftTwo,
+                      label: `Shift ${(shiftIdx.get(d.id) ?? 0) + 1}`,
+                      driverName: effectiveDriver(d, b)?.full_name ?? null,
+                    }))}
+                  />
+                ) : null}
                 {b.pickup_location ? (
                   <Text style={styles.dayRowPickup} numberOfLines={1}>
                     📍 {b.pickup_location}

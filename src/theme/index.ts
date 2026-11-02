@@ -30,6 +30,8 @@ export const colors = {
   // still selectable.
   partialBg: "#fdf1d8",
   partialText: "#8a6411",
+  // Second shift of a split day (shift 1 uses primary).
+  shiftTwo: "#d9822b",
 } as const;
 
 // Signature hero gradient used on the site's header + sticky CTA.

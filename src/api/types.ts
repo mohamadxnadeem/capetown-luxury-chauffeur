@@ -166,6 +166,12 @@ export interface BookingDay {
   driver_rate: string;
   driver_payment_status: DriverPaymentStatus;
   driver_paid_at: string | null;
+  // Per-day driver (contract 2026-11-02-day-drivers-split-shifts). All
+  // optional: an older backend omits them, treat missing as null and fall
+  // back to the booking driver.
+  driver?: number | null; // this day's own override
+  driver_name?: string | null;
+  effective_driver?: { id: number; full_name: string } | null;
   profit?: string; // omitted on driver-view trips
   created_at: string;
   updated_at: string;
@@ -276,6 +282,26 @@ export interface CreateBookingDayPayload {
   client_rate: string;
   driver_rate: string;
   driver_payment_status?: DriverPaymentStatus;
+  // null = use the booking's driver; omitted = leave as is.
+  driver?: number | null;
+}
+
+// PATCH /api/admin/booking-days/<id>/update/ (all fields optional)
+export type UpdateBookingDayPayload = Partial<
+  Omit<CreateBookingDayPayload, "client_rate" | "driver_rate">
+> & { client_rate?: string; driver_rate?: string };
+
+// POST /api/admin/booking-days/<id>/split/
+export interface SplitDayPayload {
+  split_time: string; // HH:MM
+  driver?: number | null;
+  client_rate?: string;
+  driver_rate?: string;
+}
+
+export interface SplitDayResponse {
+  original: BookingDay;
+  new: BookingDay;
 }
 
 export interface CreateBookingPayload {
