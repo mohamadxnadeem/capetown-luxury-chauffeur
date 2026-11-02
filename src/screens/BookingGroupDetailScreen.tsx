@@ -40,8 +40,6 @@ import {
 import { bookingGroupProposalUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
 import { AddVehicleSheet } from "@/components/AddVehicleSheet";
-import { DriverChangeSheet } from "@/components/DriverChangeSheet";
-import { bookingCanSplit } from "@/utils/driverChange";
 import { cleanGroupTitle } from "@/screens/BookingGroupListScreen";
 import type { RootStackParamList } from "@/navigation/types";
 import { colors } from "@/theme";
@@ -173,7 +171,6 @@ export default function BookingGroupDetailScreen() {
 
   const [busy, setBusy] = useState(false);
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
-  const [driverChangeFor, setDriverChangeFor] = useState<Booking | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
 
@@ -393,11 +390,6 @@ export default function BookingGroupDetailScreen() {
                 navigation.navigate("BookingDetail", { bookingId: b.id })
               }
               onDetach={() => handleRemoveChild(b)}
-              onDriverChange={
-                !isCancelled && bookingCanSplit(b)
-                  ? () => setDriverChangeFor(b)
-                  : undefined
-              }
             />
           ))}
         </Card.Content>
@@ -505,18 +497,6 @@ export default function BookingGroupDetailScreen() {
           }
         }}
       />
-
-      {/* Driver change: splits a vehicle's day into two shifts with a new
-          driver for the second. */}
-      {driverChangeFor ? (
-        <DriverChangeSheet
-          visible
-          onClose={() => setDriverChangeFor(null)}
-          booking={driverChangeFor}
-          groupId={group.id}
-          onDone={() => setDriverChangeFor(null)}
-        />
-      ) : null}
 
       {/* Rename sheet — simple one-field modal that PATCHes the group's
           title. Persists to the backend so the new title shows up on
@@ -668,7 +648,6 @@ function ChildBookingRow({
   canDetach,
   onOpen,
   onDetach,
-  onDriverChange,
 }: {
   booking: Booking;
   shiftLabel?: string;
@@ -677,7 +656,6 @@ function ChildBookingRow({
   canDetach: boolean;
   onOpen: () => void;
   onDetach: () => void;
-  onDriverChange?: () => void;
 }) {
   const [start, end] = bookingDateRange(booking);
   const dateLabel = start
@@ -711,15 +689,6 @@ function ChildBookingRow({
           <Text style={styles.childSub} numberOfLines={1}>
             👤 Driver to be confirmed
           </Text>
-        ) : null}
-        {onDriverChange ? (
-          <TouchableOpacity
-            onPress={onDriverChange}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 16 }}
-            style={styles.driverChangeLink}
-          >
-            <Text style={styles.driverChangeText}>⇄ Driver change</Text>
-          </TouchableOpacity>
         ) : null}
       </View>
       <View style={styles.childActions}>
@@ -766,8 +735,6 @@ function Row({
 // ---- Styles -------------------------------------------------------------
 
 const styles = StyleSheet.create({
-  driverChangeLink: { marginTop: 6, alignSelf: "flex-start" },
-  driverChangeText: { color: colors.primary, fontWeight: "700", fontSize: 13 },
   scroll: { flex: 1, backgroundColor: colors.background },
   container: { paddingBottom: 32 },
   center: {
