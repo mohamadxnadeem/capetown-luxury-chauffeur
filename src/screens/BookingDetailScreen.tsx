@@ -58,6 +58,8 @@ import { useUpdateDay, useRemoveSplit } from "@/hooks/useBookingDays";
 import {
   canSplitDay,
   distinctDrivers,
+  firstDateWindow,
+  uniqueSortedDates,
   driverDays,
   effectiveDriver,
   hhmm,
@@ -1094,10 +1096,10 @@ export default function BookingDetailScreen() {
       <AddVehicleSheet
         visible={addVehicleOpen}
         onClose={() => setAddVehicleOpen(false)}
-        defaultDates={(booking.days ?? []).map((d) => d.date)}
+        defaultDates={uniqueSortedDates(booking.days ?? [])}
         defaultDayType={booking.days?.[0]?.day_type ?? "full_day"}
-        defaultStartTime={booking.days?.[0]?.start_time ?? null}
-        defaultEndTime={booking.days?.[0]?.end_time ?? null}
+        defaultStartTime={firstDateWindow(booking.days ?? []).start}
+        defaultEndTime={firstDateWindow(booking.days ?? []).end}
         defaultPickupLocation={booking.pickup_location}
         defaultDropoffLocation={booking.dropoff_location}
         excludeVehicleIds={
