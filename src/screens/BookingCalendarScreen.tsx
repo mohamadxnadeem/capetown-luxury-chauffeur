@@ -12,7 +12,11 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useAdminBookings } from "@/hooks/useBookings";
 import { bookingDateRange, type Booking } from "@/api/types";
 import { DayScheduleBar } from "@/components/DayScheduleBar";
-import { effectiveDriver, shiftIndexByDayId } from "@/utils/dayShifts";
+import {
+  cardWindow,
+  dayCardsForDate,
+  effectiveDriver,
+} from "@/utils/dayShifts";
 import { ShimmerImage } from "@/components/ShimmerImage";
 import type { RootStackParamList } from "@/navigation/types";
 import { calendarTheme, colors } from "@/theme";
@@ -76,8 +80,11 @@ export default function BookingCalendarScreen() {
   // vehicle is still on the road the next morning.
   const bookingsByDate = useMemo(() => {
     const map = new Map<string, Booking[]>();
+    // A booking is listed once per date even when it has 2+ rows that date
+    // (split shifts); the card helper merges them for display.
     const push = (date: string, b: Booking) => {
-      (map.get(date) ?? map.set(date, []).get(date)!).push(b);
+      const list = map.get(date) ?? map.set(date, []).get(date)!;
+      if (!list.includes(b)) list.push(b);
     };
     for (const b of bookingsQuery.data ?? []) {
       if (b.status === "cancelled") continue;
@@ -118,7 +125,8 @@ export default function BookingCalendarScreen() {
     > = {};
     for (const [d, list] of bookingsByDate) {
       m[d] = { marked: true, dotColor: colors.primary };
-      if (list.length > 1) {
+      // Merged cards count once (split shifts, same car in one group).
+      if (dayCardsForDate(list, d).length > 1) {
         // Multi-booking day — use a darker dot so it stands out from single
         // bookings at a glance.
         m[d].dotColor = colors.primaryDark ?? colors.primary;
@@ -132,20 +140,30 @@ export default function BookingCalendarScreen() {
     return m;
   }, [bookingsByDate, selectedDate]);
 
-  const dayBookings = bookingsByDate.get(selectedDate) ?? [];
-  // Order by earliest start_time so the operator reads the day top-to-bottom
-  // as it will unfold.
-  const orderedDayBookings = useMemo(() => {
-    return [...dayBookings].sort((a, b) => {
-      const ta = a.days?.find((d) => d.date === selectedDate)?.start_time
-        ?? a.days?.[0]?.start_time
-        ?? "99:99:99";
-      const tb = b.days?.find((d) => d.date === selectedDate)?.start_time
-        ?? b.days?.[0]?.start_time
-        ?? "99:99:99";
-      return ta.localeCompare(tb);
-    });
-  }, [dayBookings, selectedDate]);
+  // One card per booking (or same car in one group) for the selected date,
+  // ordered by earliest start so the operator reads the day top-to-bottom.
+  const dayCards = useMemo(() => {
+    const cards = dayCardsForDate(
+      bookingsByDate.get(selectedDate) ?? [],
+      selectedDate
+    );
+    // Accommodation-only bookings have no day rows; keep them as plain cards.
+    for (const b of bookingsByDate.get(selectedDate) ?? []) {
+      if (!Array.isArray(b.days) || b.days.length === 0) {
+        cards.push({
+          key: `b${b.id}-${selectedDate}`,
+          entries: [],
+          bookings: [b],
+          groupId: null,
+          firstBooking: b,
+        });
+      }
+    }
+    const start = (c: (typeof cards)[number]) =>
+      c.entries[0]?.day.start_time ?? "00:00:00";
+    // Tail cards (overnight from yesterday) run from midnight, so first.
+    return cards.sort((x, y) => start(x).localeCompare(start(y)));
+  }, [bookingsByDate, selectedDate]);
 
   return (
     <ScrollView
@@ -167,9 +185,9 @@ export default function BookingCalendarScreen() {
           {prettyLongDate(selectedDate)}
         </Text>
         <Text style={styles.dayHeaderCount}>
-          {orderedDayBookings.length === 0
+          {dayCards.length === 0
             ? "No trips scheduled"
-            : `${orderedDayBookings.length} ${orderedDayBookings.length === 1 ? "trip" : "trips"}`}
+            : `${dayCards.length} ${dayCards.length === 1 ? "trip" : "trips"}`}
         </Text>
       </View>
 
@@ -177,40 +195,51 @@ export default function BookingCalendarScreen() {
         <View style={styles.loading}>
           <ActivityIndicator color={colors.primary} />
         </View>
-      ) : orderedDayBookings.length === 0 ? (
+      ) : dayCards.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyText}>
             Nothing on the calendar for this day.
           </Text>
         </View>
       ) : (
-        orderedDayBookings.map((b) => {
-          const day = b.days?.find((d) => d.date === selectedDate);
-          const dateDays = (b.days ?? []).filter((d) => d.date === selectedDate);
-          const shiftIdx = shiftIndexByDayId(b.days ?? []);
-          const dayDriver = day ? effectiveDriver(day, b) : null;
-          const startTime = day?.start_time
-            ? day.start_time.slice(0, 5)
+        dayCards.map((card) => {
+          const b = card.firstBooking;
+          const entries = card.entries;
+          const merged = entries.length > 1;
+          const first = entries[0]?.day;
+          const win = cardWindow(entries);
+          const shiftIdx = new Map<number, number>();
+          entries.forEach((e, i) => shiftIdx.set(e.day.id, i));
+          const dayDriver = first ? effectiveDriver(first, entries[0].booking) : null;
+          const startTime = win.start
+            ? win.start.slice(0, 5)
             : b.days?.[0]?.start_time?.slice(0, 5) ?? "—";
-          const endTime = day?.end_time
-            ? day.end_time.slice(0, 5)
+          const endTime = win.end
+            ? win.end.slice(0, 5)
             : b.days?.[0]?.end_time?.slice(0, 5) ?? null;
           const cover =
             b.car?.cover_photos?.find((p) => p.is_featured)?.cover_photos ??
             b.car?.cover_photos?.[0]?.cover_photos;
           return (
             <TouchableOpacity
-              key={b.id}
+              key={card.key}
               activeOpacity={0.85}
               onPress={() =>
-                navigation.navigate("BookingDetail", { bookingId: b.id })
+                card.groupId != null
+                  ? navigation.navigate("BookingGroupDetail", {
+                      groupId: card.groupId,
+                    })
+                  : navigation.navigate("BookingDetail", { bookingId: b.id })
               }
               style={styles.dayRow}
             >
               <View style={styles.dayRowTime}>
                 <Text style={styles.dayRowTimeText}>{startTime}</Text>
                 {endTime ? (
-                  <Text style={styles.dayRowTimeEnd}>{endTime}</Text>
+                  <Text style={styles.dayRowTimeEnd}>
+                    {endTime}
+                    {win.endNextDay ? " +1" : ""}
+                  </Text>
                 ) : null}
               </View>
               <ShimmerImage
@@ -230,24 +259,25 @@ export default function BookingCalendarScreen() {
                 </Text>
                 <Text style={styles.dayRowMeta} numberOfLines={1}>
                   {b.car?.title ?? "No vehicle"}
-                  {dateDays.length <= 1 && (dayDriver?.full_name ?? b.driver?.full_name)
+                  {!merged && (dayDriver?.full_name ?? b.driver?.full_name)
                     ? `  ·  ${dayDriver?.full_name ?? b.driver?.full_name}`
                     : ""}
                 </Text>
-                {dateDays.length > 1 ? (
+                {merged ? (
                   <DayScheduleBar
                     startTime={null}
                     endTime={null}
-                    shifts={dateDays.map((d) => ({
-                      startTime: d.start_time,
-                      endTime: d.end_time,
-                      endNextDay: !!d.end_next_day,
+                    shifts={entries.map((e) => ({
+                      startTime: e.day.start_time,
+                      endTime: e.day.end_time,
+                      endNextDay: !!e.day.end_next_day,
                       color:
-                        (shiftIdx.get(d.id) ?? 0) === 0
+                        (shiftIdx.get(e.day.id) ?? 0) === 0
                           ? colors.primary
                           : colors.shiftTwo,
-                      label: `Shift ${(shiftIdx.get(d.id) ?? 0) + 1}`,
-                      driverName: effectiveDriver(d, b)?.full_name ?? null,
+                      label: `Shift ${(shiftIdx.get(e.day.id) ?? 0) + 1}`,
+                      driverName:
+                        effectiveDriver(e.day, e.booking)?.full_name ?? null,
                     }))}
                   />
                 ) : null}

@@ -55,3 +55,43 @@ console.log("dayShifts OK");
   assert.ok(!("driver" in old[0]));
   console.log("edit round-trip OK");
 }
+
+// Merged cards: one per booking (or same car + group) per date.
+{
+  const car = (id) => ({ id, title: "Car " + id });
+  const bk = (o) => ({ id: 1, group_id: null, car: car(1), days: [], ...o });
+  const d = (o) => day(o);
+  // split same date
+  const split = bk({ id: 1, days: [d({ id: 1, end_time: "13:00:00" }), d({ id: 2, start_time: "13:00:00", end_time: "21:00:00" })] });
+  let cards = u.dayCardsForDate([split], "2026-11-20");
+  assert.strictEqual(cards.length, 1);
+  assert.strictEqual(cards[0].entries.length, 2);
+  assert.deepStrictEqual(u.cardWindow(cards[0].entries), { start: "09:00:00", end: "21:00:00", endNextDay: false });
+  // overnight split: one card on day 1, one tail card on day 2
+  const over = bk({ id: 2, days: [d({ id: 3, end_time: "17:30:00" }), d({ id: 4, start_time: "17:30:00", end_time: "02:00:00", end_next_day: true })] });
+  cards = u.dayCardsForDate([over], "2026-11-20");
+  assert.strictEqual(cards.length, 1);
+  assert.deepStrictEqual(u.cardWindow(cards[0].entries), { start: "09:00:00", end: "02:00:00", endNextDay: true });
+  cards = u.dayCardsForDate([over], "2026-11-21");
+  assert.strictEqual(cards.length, 1);
+  assert.strictEqual(cards[0].entries.length, 0);
+  assert.strictEqual(u.dayCardsForDate([over], "2026-11-22").length, 0);
+  // separate bookings, same car + group: one card, taps to group
+  const a = bk({ id: 10, group_id: 5, days: [d({ id: 5, end_time: "13:00:00" })] });
+  const b2 = bk({ id: 11, group_id: 5, days: [d({ id: 6, start_time: "13:00:00", end_time: "21:00:00" })] });
+  cards = u.dayCardsForDate([b2, a], "2026-11-20");
+  assert.strictEqual(cards.length, 1);
+  assert.strictEqual(cards[0].groupId, 5);
+  assert.strictEqual(cards[0].firstBooking.id, 10);
+  assert.deepStrictEqual(cards[0].entries.map((e) => e.booking.id), [10, 11]);
+  // different cars in the same group stay separate
+  const c2 = bk({ id: 12, group_id: 5, car: car(2), days: [d({ id: 7 })] });
+  assert.strictEqual(u.dayCardsForDate([a, c2], "2026-11-20").length, 2);
+  // same car, no group: separate
+  const n1 = bk({ id: 20, days: [d({ id: 8 })] }), n2 = bk({ id: 21, days: [d({ id: 9 })] });
+  assert.strictEqual(u.dayCardsForDate([n1, n2], "2026-11-20").length, 2);
+  // single shift driver view
+  assert.strictEqual(u.dayCardsForDate([n1], "2026-11-20")[0].entries.length, 1);
+  assert.strictEqual(u.mergeByKey([1, 2, 3], (n) => String(n % 2)).length, 2);
+  console.log("dayCards OK");
+}

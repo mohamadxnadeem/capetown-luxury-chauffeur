@@ -740,6 +740,7 @@ format.
 
 ### 2026-11-03
 
+- Calendar shows one card per booking per date (split shifts merged, whole window, shift bar) and merges same-car bookings of one group into one card that opens the group; counts and dots count merged cards once. Helpers in `src/utils/dayShifts.ts`. JS only, OTA safe.
 - Group share link now points to /booking-confirmation/<ref> (was a 404
   /proposal/); group detail vehicle rows show "car · plate · dates"
   instead of the booking reference. JS only, OTA safe.

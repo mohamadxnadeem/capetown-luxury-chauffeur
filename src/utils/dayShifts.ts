@@ -223,3 +223,112 @@ export function buildEditDays(
   }
   return out;
 }
+
+// ---- One card per booking (or same-car group) per date -------------------
+
+export interface DayCardEntry {
+  booking: Booking;
+  day: BookingDay;
+}
+
+export interface DayCard {
+  key: string;
+  // Rows on this date, ordered by start time. Empty for a tail card (an
+  // overnight shift from the previous date still running this morning).
+  entries: DayCardEntry[];
+  bookings: Booking[];
+  // Set when the card merges bookings of one booking group.
+  groupId: number | null;
+  // Where a tap should go: the group screen when there is a group, else the
+  // first booking.
+  firstBooking: Booking;
+}
+
+function prevIso(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Cards for one date. A booking with 2+ rows that date is ONE card. Separate
+// bookings that are the same car in the same booking group merge into one
+// card too. A booking showing only because of the previous date's overnight
+// tail (no row on this date) is its own card with no entries.
+export function dayCardsForDate(bookings: Booking[], date: string): DayCard[] {
+  const prev = prevIso(date);
+  const byKey = new Map<string, DayCard>();
+  const order: DayCard[] = [];
+  const add = (b: Booking, day: BookingDay | null) => {
+    const carId = b.car?.id ?? null;
+    const merge = b.group_id != null && carId != null;
+    const key = merge
+      ? `g${b.group_id}-c${carId}-${date}`
+      : `b${b.id}-${date}`;
+    let card = byKey.get(key);
+    if (!card) {
+      card = {
+        key,
+        entries: [],
+        bookings: [],
+        groupId: merge ? (b.group_id as number) : null,
+        firstBooking: b,
+      };
+      byKey.set(key, card);
+      order.push(card);
+    }
+    if (!card.bookings.some((x) => x.id === b.id)) card.bookings.push(b);
+    if (day) card.entries.push({ booking: b, day });
+  };
+  for (const b of bookings) {
+    const days = b.days ?? [];
+    const rows = days.filter((d) => d.date === date);
+    if (rows.length > 0) {
+      for (const r of rows) add(b, r);
+    } else if (days.some((d) => d.date === prev && d.end_next_day)) {
+      add(b, null);
+    }
+  }
+  for (const card of order) {
+    card.entries.sort(
+      (a, b) =>
+        (toMinutes(a.day.start_time) ?? -1) -
+          (toMinutes(b.day.start_time) ?? -1) || a.day.id - b.day.id
+    );
+    card.bookings.sort((a, b) => a.id - b.id);
+    card.firstBooking = card.entries[0]?.booking ?? card.bookings[0];
+  }
+  return order;
+}
+
+// Whole window of a card's rows: first start to last end. endNextDay when the
+// last shift runs past midnight.
+export function cardWindow(entries: DayCardEntry[]): {
+  start: string | null;
+  end: string | null;
+  endNextDay: boolean;
+} {
+  if (entries.length === 0) return { start: null, end: null, endNextDay: false };
+  const first = entries[0].day;
+  const last = entries[entries.length - 1].day;
+  const s = toMinutes(last.start_time);
+  const e = toMinutes(last.end_time);
+  return {
+    start: first.start_time ?? null,
+    end: last.end_time ?? null,
+    endNextDay: !!last.end_next_day || (s != null && e != null && e < s),
+  };
+}
+
+// Merge key helper for driver schedule events, one entry per booking per
+// date. Pure so it can be checked without React.
+export function mergeByKey<T>(
+  items: T[],
+  keyOf: (t: T) => string
+): T[][] {
+  const map = new Map<string, T[]>();
+  for (const it of items) {
+    const k = keyOf(it);
+    map.set(k, [...(map.get(k) ?? []), it]);
+  }
+  return [...map.values()];
+}
