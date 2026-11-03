@@ -43,6 +43,7 @@ import { AddVehicleSheet } from "@/components/AddVehicleSheet";
 import { cleanGroupTitle } from "@/screens/BookingGroupListScreen";
 import type { RootStackParamList } from "@/navigation/types";
 import { colors } from "@/theme";
+import { vehicleLabel } from "@/utils/vehicle";
 import { firstDateWindow, uniqueSortedDates } from "@/utils/dayShifts";
 
 // ---- Helpers ------------------------------------------------------------
@@ -384,6 +385,15 @@ export default function BookingGroupDetailScreen() {
               key={b.id}
               booking={b}
               shiftLabel={shifts.get(b.id)}
+              vehicleText={
+                b.car
+                  ? vehicleLabel(
+                      (formOptionsQuery.data?.vehicles ?? []).find(
+                        (v) => v.id === b.car!.id
+                      ) ?? b.car
+                    )
+                  : "Accommodation only"
+              }
               index={i}
               isLast={i === group.bookings.length - 1}
               canDetach={!isCancelled && group.bookings.length > 1}
@@ -644,6 +654,7 @@ function ActionButton({
 function ChildBookingRow({
   booking,
   shiftLabel,
+  vehicleText,
   index,
   isLast,
   canDetach,
@@ -652,6 +663,7 @@ function ChildBookingRow({
 }: {
   booking: Booking;
   shiftLabel?: string;
+  vehicleText: string;
   index: number;
   isLast: boolean;
   canDetach: boolean;
@@ -680,7 +692,7 @@ function ChildBookingRow({
           {shiftLabel ? `  ·  ${shiftLabel}` : ""}
         </Text>
         <Text style={styles.childMeta} numberOfLines={1}>
-          {booking.booking_reference}  ·  {dateLabel}
+          {vehicleText}  ·  {dateLabel}
         </Text>
         {booking.driver?.full_name ? (
           <Text style={styles.childSub} numberOfLines={1}>
