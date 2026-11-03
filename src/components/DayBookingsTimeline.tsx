@@ -49,6 +49,15 @@ export function DayBookingsTimeline({ date, slots, onSlotPress }: Props) {
     [slots]
   );
 
+  // List rows: one per booking reference, with every shift's range joined.
+  const rows = useMemo(() => {
+    const map = new Map<string, BookedSlot[]>();
+    for (const s of sorted) {
+      map.set(s.booking_reference, [...(map.get(s.booking_reference) ?? []), s]);
+    }
+    return [...map.values()];
+  }, [sorted]);
+
   const prettyDate = useMemo(() => {
     const d = new Date(`${date}T00:00:00`);
     return d.toLocaleDateString("en", {
@@ -62,9 +71,9 @@ export function DayBookingsTimeline({ date, slots, onSlotPress }: Props) {
     <View style={styles.wrap}>
       <Text style={styles.heading}>{prettyDate}</Text>
       <Text style={styles.sub}>
-        {sorted.length === 0
+        {rows.length === 0
           ? "No bookings on this day."
-          : `${sorted.length} booking${sorted.length === 1 ? "" : "s"} — tap one to open it.`}
+          : `${rows.length} booking${rows.length === 1 ? "" : "s"} — tap one to open it.`}
       </Text>
 
       {sorted.length > 0 ? (
@@ -100,11 +109,16 @@ export function DayBookingsTimeline({ date, slots, onSlotPress }: Props) {
 
           {/* Tappable list of the day's bookings */}
           <View style={styles.list}>
-            {sorted.map((s, i) => {
+            {rows.map((group, i) => {
+              const s = group[0];
               const tone = statusTone(s.status);
-              const range = s.start_time
-                ? `${hhmm(s.start_time)} – ${s.end_time ? hhmm(s.end_time) : "end of day"}`
-                : "All day";
+              const range = group
+                .map((g) =>
+                  g.start_time
+                    ? `${hhmm(g.start_time)} – ${g.end_time ? hhmm(g.end_time) : "end of day"}`
+                    : "All day"
+                )
+                .join("  +  ");
               return (
                 <TouchableOpacity
                   key={`${s.booking_reference}-row-${i}`}

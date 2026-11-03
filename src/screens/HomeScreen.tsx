@@ -12,6 +12,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useAdminBookings } from "@/hooks/useBookings";
+import { cardWindow, dayCardsForDate } from "@/utils/dayShifts";
 import { bookingDateRange, type Booking, type BookingStatus } from "@/api/types";
 import { colors, gradientPrimary } from "@/theme";
 import type { RootStackParamList } from "@/navigation/types";
@@ -24,6 +25,8 @@ type StatusFilter = "all" | BookingStatus;
 // first day as past doesn't hide the second.
 interface UpcomingDay {
   booking: Booking;
+  groupId?: number | null; // merged same-car group card: tap opens the group
+  shiftCount?: number; // rows merged into this card (2+ = split / merged)
   dayDate: string; // YYYY-MM-DD, THIS specific day
   startTime: string | null; // HH:MM:SS for this day
   endTime: string | null;
@@ -91,6 +94,7 @@ export default function HomeScreen() {
     const horizonIso = isoLocal(horizon);
 
     const upcoming: UpcomingDay[] = [];
+    const pending: { b: Booking; date: string }[] = [];
     for (const b of all) {
       if (b.status === "cancelled" || b.status === "completed") continue;
       if (Array.isArray(b.days) && b.days.length > 0) {
@@ -105,12 +109,7 @@ export default function HomeScreen() {
           (d) => d.date > todayIso && d.date <= horizonIso
         );
         if (next) {
-          upcoming.push({
-            booking: b,
-            dayDate: next.date,
-            startTime: next.start_time,
-            endTime: next.end_time,
-          });
+          pending.push({ b, date: next.date });
         }
       } else {
         const [start] = bookingDateRange(b);
@@ -122,6 +121,24 @@ export default function HomeScreen() {
             endTime: null,
           });
         }
+      }
+    }
+    // One row per booking (or same car in one group) per date, showing the
+    // whole window of every shift that date.
+    const dates = [...new Set(pending.map((p) => p.date))];
+    for (const date of dates) {
+      const bs = pending.filter((p) => p.date === date).map((p) => p.b);
+      for (const card of dayCardsForDate(bs, date)) {
+        if (card.entries.length === 0) continue;
+        const win = cardWindow(card.entries);
+        upcoming.push({
+          booking: card.firstBooking,
+          groupId: card.groupId,
+          shiftCount: card.entries.length,
+          dayDate: date,
+          startTime: win.start,
+          endTime: win.end,
+        });
       }
     }
     upcoming.sort((a, b) => {
@@ -219,7 +236,13 @@ export default function HomeScreen() {
                       ?.cover_photos ??
                     entry.booking.car?.cover_photos?.[0]?.cover_photos
                   }
-                  onPress={() => viewBooking(entry.booking)}
+                  onPress={() =>
+                    entry.groupId != null
+                      ? navigation.navigate("BookingGroupDetail", {
+                          groupId: entry.groupId,
+                        })
+                      : viewBooking(entry.booking)
+                  }
                 />
               ))
             )}
@@ -335,7 +358,7 @@ function SoonRow({
   coverUrl?: string;
   onPress: () => void;
 }) {
-  const { booking, dayDate, startTime, endTime } = entry;
+  const { booking, dayDate, startTime, endTime, shiftCount } = entry;
   const timeLabel = startTime
     ? `${startTime.slice(0, 5)}${endTime ? ` – ${endTime.slice(0, 5)}` : ""}`
     : null;
@@ -373,6 +396,7 @@ function SoonRow({
           {booking.car?.title}
           {timeLabel ? `  ·  ${timeLabel}` : ""}
           {legLabel ? `  ·  ${legLabel}` : ""}
+          {shiftCount && shiftCount > 1 ? `  ·  ${shiftCount} shifts` : ""}
         </Text>
       </View>
       <View style={styles.rowRight}>

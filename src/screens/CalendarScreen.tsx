@@ -9,6 +9,7 @@ import { useAdminBookings } from "@/hooks/useBookings";
 import { useDriverSchedule } from "@/hooks/useSchedule";
 import type { Booking, DriverScheduleEvent } from "@/api/types";
 import type { RootStackParamList } from "@/navigation/types";
+import { cardWindow, dayCardsForDate, mergeByKey, uniqueSortedDates } from "@/utils/dayShifts";
 import { calendarTheme, colors } from "@/theme";
 
 interface CalendarItem {
@@ -18,20 +19,37 @@ interface CalendarItem {
   subtitle?: string;
   bookingId?: number | string;
   bookingRef?: string;
+  groupId?: number | null;
 }
 
-function adminBookingToItems(b: Booking): CalendarItem[] {
-  // Bookings always have at least one day per the create API contract, but
-  // guard against an empty list to keep the screen resilient.
-  if (!Array.isArray(b.days) || b.days.length === 0) return [];
-  return b.days.map((d) => ({
-    key: `b${b.id}-d${d.id}`,
-    date: d.date,
-    title: b.customer_name || `Booking #${b.id}`,
-    subtitle: [d.start_time, b.pickup_location].filter(Boolean).join(" · "),
-    bookingId: b.id,
-    bookingRef: b.booking_reference,
-  }));
+// One item per booking (or same car in one group) per date. Split shifts and
+// same-car group bookings merge into a single card with the whole window.
+function adminBookingsToItems(all: Booking[]): CalendarItem[] {
+  const dates = uniqueSortedDates(all.flatMap((b) => b.days ?? []));
+  return dates.flatMap((date) =>
+    dayCardsForDate(all, date)
+      .filter((c) => c.entries.length > 0)
+      .map((c) => {
+        const b = c.firstBooking;
+        const win = cardWindow(c.entries);
+        const times = c.entries
+          .map((e) => (e.day.start_time ?? "").slice(0, 5))
+          .filter(Boolean);
+        const windowLabel =
+          c.entries.length > 1 && win.start
+            ? `${win.start.slice(0, 5)} - ${(win.end ?? "").slice(0, 5)}${win.endNextDay ? " (next day)" : ""}`
+            : times[0];
+        return {
+          key: c.key,
+          date,
+          title: b.customer_name || `Booking #${b.id}`,
+          subtitle: [windowLabel, b.pickup_location].filter(Boolean).join(" · "),
+          bookingId: b.id,
+          bookingRef: b.booking_reference,
+          groupId: c.groupId,
+        };
+      })
+  );
 }
 
 function driverEventToItem(e: DriverScheduleEvent): CalendarItem {
@@ -67,9 +85,32 @@ export default function CalendarScreen() {
 
   const items: CalendarItem[] = useMemo(() => {
     if (isDriver) {
-      return (driverQuery.data ?? []).map(driverEventToItem);
+      // A driver only receives their own shifts. Two shifts of one booking on
+      // one date show as one card.
+      return mergeByKey(driverQuery.data ?? [], (e) =>
+        e.type === "blocked" ? e.id : `${e.booking_reference}-${e.date}`
+      ).map((group) => {
+        const item = driverEventToItem(group[0]);
+        if (group.length > 1) {
+          const times = group.flatMap((e) =>
+            e.type === "blocked" || !e.start_time
+              ? []
+              : [
+                  `${e.start_time.slice(0, 5)}${e.end_time ? "-" + e.end_time.slice(0, 5) : ""}`,
+                ]
+          );
+          const first = group[0];
+          item.subtitle = [
+            times.join(", "),
+            first.type === "blocked" ? null : first.pickup_location,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+        }
+        return item;
+      });
     }
-    return (adminQuery.data ?? []).flatMap(adminBookingToItems);
+    return adminBookingsToItems(adminQuery.data ?? []);
   }, [isDriver, adminQuery.data, driverQuery.data]);
 
   const today = new Date().toISOString().slice(0, 10);
@@ -94,7 +135,9 @@ export default function CalendarScreen() {
   const dayItems = items.filter((it) => it.date === selectedDate);
 
   function onItemPress(item: CalendarItem) {
-    if (isDriver && item.bookingRef) {
+    if (!isDriver && item.groupId != null) {
+      navigation.navigate("BookingGroupDetail", { groupId: item.groupId });
+    } else if (isDriver && item.bookingRef) {
       navigation.navigate("BookingDetail", { bookingRef: item.bookingRef });
     } else if (!isDriver && item.bookingId != null) {
       navigation.navigate("BookingDetail", { bookingId: item.bookingId });
