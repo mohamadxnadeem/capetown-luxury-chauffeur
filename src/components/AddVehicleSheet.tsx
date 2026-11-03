@@ -113,7 +113,7 @@ export function AddVehicleSheet({
 }: Props) {
   const [vehicleId, setVehicleId] = useState<number | null>(null);
   const [driverId, setDriverId] = useState<number | null>(null);
-  const [selectedDates, setSelectedDates] = useState<string[]>(defaultDates);
+  const [selectedDates, setSelectedDates] = useState<string[]>(() => [...new Set(defaultDates)]);
   const [startTime, setStartTime] = useState(
     hhmmFromServer(defaultStartTime) || "09:00"
   );
@@ -135,7 +135,7 @@ export function AddVehicleSheet({
     if (!visible) return;
     setVehicleId(null);
     setDriverId(null);
-    setSelectedDates(defaultDates);
+    setSelectedDates([...new Set(defaultDates)]);
     setStartTime(hhmmFromServer(defaultStartTime) || "09:00");
     setEndTime(hhmmFromServer(defaultEndTime) || "17:00");
     setClientRate("");
@@ -230,7 +230,8 @@ export function AddVehicleSheet({
       return;
     }
 
-    const days: CreateBookingDayPayload[] = selectedDates.map((date) => ({
+    // One row per date: a duplicated date is rejected by the backend.
+    const days: CreateBookingDayPayload[] = [...new Set(selectedDates)].map((date) => ({
       date,
       day_type: defaultDayType,
       start_time: timeForApi(startTime),

@@ -43,6 +43,7 @@ import { AddVehicleSheet } from "@/components/AddVehicleSheet";
 import { cleanGroupTitle } from "@/screens/BookingGroupListScreen";
 import type { RootStackParamList } from "@/navigation/types";
 import { colors } from "@/theme";
+import { firstDateWindow, uniqueSortedDates } from "@/utils/dayShifts";
 
 // ---- Helpers ------------------------------------------------------------
 
@@ -466,10 +467,10 @@ export default function BookingGroupDetailScreen() {
       <AddVehicleSheet
         visible={addVehicleOpen}
         onClose={() => setAddVehicleOpen(false)}
-        defaultDates={(group.bookings[0]?.days ?? []).map((d) => d.date)}
+        defaultDates={uniqueSortedDates(group.bookings[0]?.days ?? [])}
         defaultDayType={group.bookings[0]?.days?.[0]?.day_type ?? "full_day"}
-        defaultStartTime={group.bookings[0]?.days?.[0]?.start_time ?? null}
-        defaultEndTime={group.bookings[0]?.days?.[0]?.end_time ?? null}
+        defaultStartTime={firstDateWindow(group.bookings[0]?.days ?? []).start}
+        defaultEndTime={firstDateWindow(group.bookings[0]?.days ?? []).end}
         defaultPickupLocation={group.bookings[0]?.pickup_location}
         defaultDropoffLocation={group.bookings[0]?.dropoff_location}
         usedVehicleIds={group.bookings

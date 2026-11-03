@@ -162,6 +162,22 @@ export function uniqueSortedDates(days: BookingDay[]): string[] {
   return [...new Set(days.map((d) => d.date))].sort();
 }
 
+// Whole-day window of the first date: first shift's start to last shift's
+// end. A split day is two rows on one date, so "first row" alone would only
+// give shift 1. Used to prefill "add another vehicle".
+export function firstDateWindow(days: BookingDay[]): {
+  start: string | null;
+  end: string | null;
+} {
+  const sorted = sortDays(days);
+  if (sorted.length === 0) return { start: null, end: null };
+  const same = sorted.filter((d) => d.date === sorted[0].date);
+  return {
+    start: same[0].start_time ?? null,
+    end: same[same.length - 1].end_time ?? null,
+  };
+}
+
 // A stored day row back into the write shape, untouched. `driver` is only
 // included when the backend returned it (older backends omit it).
 export function dayRowToPayload(d: BookingDay): CreateBookingDayPayload {
