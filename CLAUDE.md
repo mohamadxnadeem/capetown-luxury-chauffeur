@@ -740,6 +740,9 @@ format.
 
 ### 2026-11-03
 
+- Group share link now points to /booking-confirmation/<ref> (was a 404
+  /proposal/); group detail vehicle rows show "car · plate · dates"
+  instead of the booking reference. JS only, OTA safe.
 - Per-day drivers and split shifts on ONE booking (contract
   2026-11-02-day-drivers-split-shifts). Driver picker, Edit times, Split
   shift (full_day over 8h) and Remove split on each day row of
