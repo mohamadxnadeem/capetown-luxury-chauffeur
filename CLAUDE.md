@@ -738,6 +738,10 @@ the version without a new store build.
 Newest first. Add new entries at the top with the date in ISO
 format.
 
+### 2026-11-10
+
+- Paste job screen (admin): paste a job, POST `/api/admin/bookings/from-text/` creates a pending booking and opens it; Home gets Paste job and Open HQ buttons (`src/config/links.ts`). Needs the backend deployed first. JS only, OTA safe.
+
 ### 2026-11-03
 
 - Calendar shows one card per booking per date (split shifts merged, whole window, shift bar) and merges same-car bookings of one group into one card that opens the group; counts and dots count merged cards once. Helpers in `src/utils/dayShifts.ts`. JS only, OTA safe.
