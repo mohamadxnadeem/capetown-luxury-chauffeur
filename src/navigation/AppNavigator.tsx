@@ -15,6 +15,7 @@ import { Button, Text } from "react-native-paper";
 import LoginScreen from "@/screens/LoginScreen";
 import BookingDetailScreen from "@/screens/BookingDetailScreen";
 import NewBookingScreen from "@/screens/NewBookingScreen";
+import PasteJobScreen from "@/screens/PasteJobScreen";
 import VehicleDetailScreen from "@/screens/VehicleDetailScreen";
 import VehicleEditScreen from "@/screens/VehicleEditScreen";
 import VehicleSearchScreen from "@/screens/VehicleSearchScreen";
@@ -365,6 +366,13 @@ export default function AppNavigator() {
               component={NewBookingScreen}
               options={{ title: "New Booking" }}
             />
+            {role === "admin" && (
+              <Stack.Screen
+                name="PasteJob"
+                component={PasteJobScreen}
+                options={{ title: "Paste job" }}
+              />
+            )}
           </>
         )}
       </Stack.Navigator>
