@@ -80,7 +80,9 @@ export default function PasteJobScreen() {
             }
             return;
           }
-          setMessage(formatApiError(err));
+          setMessage(
+            typeof data?.detail === "string" ? data.detail : formatApiError(err)
+          );
         },
       }
     );
