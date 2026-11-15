@@ -2,6 +2,8 @@ import { api } from "./client";
 import type {
   Booking,
   BookingDay,
+  BookingFromTextPayload,
+  BookingFromTextResponse,
   BookingFormOptions,
   CreateBookingPayload,
   DriverScheduleEvent,
@@ -42,6 +44,19 @@ export async function createBooking(
   payload: CreateBookingPayload
 ): Promise<Booking> {
   const resp = await api.post<Booking>("/api/admin/bookings/create/", payload);
+  return resp.data;
+}
+
+// Claude reads the pasted job and creates a pending booking. Can take up to
+// ~45s on the server, so this call has its own long timeout.
+export async function createBookingFromText(
+  payload: BookingFromTextPayload
+): Promise<BookingFromTextResponse> {
+  const resp = await api.post<BookingFromTextResponse>(
+    "/api/admin/bookings/from-text/",
+    payload,
+    { timeout: 60_000 }
+  );
   return resp.data;
 }
 

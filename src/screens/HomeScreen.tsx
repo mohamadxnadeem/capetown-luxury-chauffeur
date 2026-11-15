@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
 import {
+  Alert,
   FlatList,
+  Linking,
   RefreshControl,
   StyleSheet,
   TouchableOpacity,
@@ -16,6 +18,8 @@ import { cardWindow, dayCardsForDate } from "@/utils/dayShifts";
 import { bookingDateRange, type Booking, type BookingStatus } from "@/api/types";
 import { colors, gradientPrimary } from "@/theme";
 import type { RootStackParamList } from "@/navigation/types";
+import { HQ_URL } from "@/config/links";
+import { useAuthStore } from "@/state/auth";
 
 type StatusFilter = "all" | BookingStatus;
 
@@ -43,6 +47,7 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
 export default function HomeScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const role = useAuthStore((s) => s.role);
   const bookingsQuery = useAdminBookings();
 
   const [filter, setFilter] = useState<StatusFilter>("all");
@@ -205,6 +210,31 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.ctaChevron}>›</Text>
           </TouchableOpacity>
+
+          {role === "admin" && (
+            <View style={styles.ctaRow2}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => navigation.navigate("PasteJob")}
+                style={styles.ctaHalf}
+              >
+                <Text style={styles.ctaHalfTitle}>Paste job</Text>
+                <Text style={styles.ctaSubtitle}>Create a booking from text</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() =>
+                  Linking.openURL(HQ_URL).catch(() =>
+                    Alert.alert("Could not open HQ", HQ_URL)
+                  )
+                }
+                style={styles.ctaHalf}
+              >
+                <Text style={styles.ctaHalfTitle}>Open HQ</Text>
+                <Text style={styles.ctaSubtitle}>Opens in your browser</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Upcoming this week — one flat list, sorted by start date so the
               operator reads it in the order trips will happen. Each row
@@ -578,6 +608,16 @@ const styles = StyleSheet.create({
   ctaTextWrap: { flex: 1, marginLeft: 14 },
   ctaTitle: { color: colors.heading, fontSize: 16, fontWeight: "700" },
   ctaSubtitle: { color: colors.muted, fontSize: 13, marginTop: 2 },
+  ctaRow2: { flexDirection: "row", gap: 10, marginHorizontal: 16, marginBottom: 14 },
+  ctaHalf: {
+    flex: 1,
+    padding: 14,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  ctaHalfTitle: { color: colors.heading, fontSize: 15, fontWeight: "700" },
   ctaChevron: { color: colors.muted, fontSize: 28, marginLeft: 8 },
 
   // Side-by-side quick-action tiles under the hero: search + calendar.

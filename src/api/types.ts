@@ -860,3 +860,28 @@ export interface CalendarTokenResponse {
   ical_url: string | null;
   webcal_url: string | null;
 }
+
+// POST /api/admin/bookings/from-text/ (contract 2026-11-10-paste-job-booking)
+export interface BookingFromTextPayload {
+  text: string;
+  car_id?: number | null;
+}
+
+export interface BookingFromTextResponse {
+  booking: Booking;
+  warnings: string[];
+}
+
+export interface CarOption {
+  id: number;
+  title: string;
+  registration_number: string | null;
+}
+
+// Body of a 422 from the same endpoint. missing is any of
+// "car" | "customer_name" | "date".
+export interface BookingFromTextMissing {
+  detail: string;
+  missing: string[];
+  car_options: CarOption[];
+}

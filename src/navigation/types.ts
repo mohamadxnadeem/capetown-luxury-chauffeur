@@ -64,6 +64,8 @@ export type RootStackParamList = {
         preselectAccommodation?: { kind: "villa" | "hotel"; id: number };
       }
     | undefined;
+  // Admin: paste a job's text and let the backend create a pending booking.
+  PasteJob: undefined;
   // Multi-vehicle proposal wrapper. Shows combined total, one Yoco link,
   // one client-facing proposal URL. Child bookings navigated to their own
   // BookingDetail from within.

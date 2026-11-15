@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createBooking,
+  createBookingFromText,
   fetchAdminBooking,
   fetchAdminBookings,
   fetchBookingFormOptions,
@@ -10,7 +11,11 @@ import {
   fetchVehiclesAvailable,
   updateBooking,
 } from "@/api/bookings";
-import type { BookingStatus, CreateBookingPayload } from "@/api/types";
+import type {
+  BookingFromTextPayload,
+  BookingStatus,
+  CreateBookingPayload,
+} from "@/api/types";
 
 export function useAdminBookings(filters?: {
   status?: string;
@@ -129,6 +134,20 @@ export function useUpdateBooking(id: number | string | undefined) {
       // Seed the booking-detail cache with the fresh response so the screen
       // updates immediately without a second round-trip.
       qc.setQueryData(["admin", "booking", booking.id], booking);
+    },
+  });
+}
+
+export function useCreateBookingFromText() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: BookingFromTextPayload) =>
+      createBookingFromText(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "bookings"] });
+      qc.invalidateQueries({ queryKey: ["admin", "vehicles-available"] });
+      qc.invalidateQueries({ queryKey: ["admin", "vehicle-unavailable-dates"] });
+      qc.invalidateQueries({ queryKey: ["admin", "vehicle-booked-slots"] });
     },
   });
 }
