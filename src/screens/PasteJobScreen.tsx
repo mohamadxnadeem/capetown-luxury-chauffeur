@@ -7,13 +7,14 @@ import {
   StyleSheet,
   View,
 } from "react-native";
-import { Button, Menu, Text, TextInput } from "react-native-paper";
+import { Button, Text, TextInput } from "react-native-paper";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useBookingFormOptions, useCreateBookingFromText } from "@/hooks/useBookings";
 import { formatApiError } from "@/api/errors";
 import type { BookingFromTextMissing, CarOption } from "@/api/types";
 import { vehicleLabel } from "@/utils/vehicle";
+import VehiclePickerModal from "@/components/VehiclePickerModal";
 import { colors } from "@/theme";
 import type { RootStackParamList } from "@/navigation/types";
 
@@ -117,42 +118,40 @@ export default function PasteJobScreen() {
         {needsCar && (
           <Text style={styles.needCar}>Please pick the car for this job.</Text>
         )}
-        <Menu
+        <Button
+          mode="outlined"
+          icon="car"
+          onPress={() => setMenuOpen(true)}
+          disabled={mutation.isPending}
+          style={styles.carBtn}
+        >
+          {selectedCar
+            ? vehicleLabel(selectedCar)
+            : "Car (optional, or name it in the text)"}
+        </Button>
+        <VehiclePickerModal
           visible={menuOpen}
           onDismiss={() => setMenuOpen(false)}
-          anchor={
-            <Button
-              mode="outlined"
-              icon="car"
-              onPress={() => setMenuOpen(true)}
-              disabled={mutation.isPending}
-              style={styles.carBtn}
-            >
-              {selectedCar
-                ? vehicleLabel(selectedCar)
-                : "Car (optional, or name it in the text)"}
-            </Button>
-          }
-        >
-          <Menu.Item
-            title="No car picked"
-            onPress={() => {
-              setCarId(null);
-              setMenuOpen(false);
-            }}
-          />
-          {cars.map((c) => (
-            <Menu.Item
-              key={c.id}
-              title={vehicleLabel(c)}
-              onPress={() => {
-                setCarId(c.id);
-                setNeedsCar(false);
+          vehicles={cars}
+          selectedId={carId}
+          heading="Choose a car"
+          onSelect={(c) => {
+            setCarId(c.id);
+            setNeedsCar(false);
+            setMenuOpen(false);
+          }}
+          extras={[
+            {
+              key: "none",
+              title: "No car picked",
+              selected: carId == null,
+              onPress: () => {
+                setCarId(null);
                 setMenuOpen(false);
-              }}
-            />
-          ))}
-        </Menu>
+              },
+            },
+          ]}
+        />
 
         {message && <Text style={styles.error}>{message}</Text>}
 
