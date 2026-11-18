@@ -48,6 +48,7 @@ import type {
 import type { RootStackParamList } from "@/navigation/types";
 import { formatApiError } from "@/api/errors";
 import { vehicleLabel } from "@/utils/vehicle";
+import VehiclePickerModal from "@/components/VehiclePickerModal";
 import {
   buildEditDays,
   sortDays,
@@ -955,54 +956,43 @@ export default function NewBookingScreen() {
       >
         {/* ---- Vehicle ---- */}
         <Section title="Vehicle">
-          <Menu
+          <Button
+            mode="outlined"
+            onPress={() => setVehicleMenuOpen(true)}
+            style={styles.vehicleButton}
+            contentStyle={styles.vehicleButtonContent}
+          >
+            {form.noVehicle
+              ? "No chauffeur — accommodation only"
+              : selectedVehicle
+                ? vehicleLabel(selectedVehicle)
+                : "Choose a vehicle"}
+          </Button>
+          <VehiclePickerModal
             visible={vehicleMenuOpen}
             onDismiss={() => setVehicleMenuOpen(false)}
-            anchor={
-              <Button
-                mode="outlined"
-                onPress={() => setVehicleMenuOpen(true)}
-                style={styles.vehicleButton}
-                contentStyle={styles.vehicleButtonContent}
-              >
-                {form.noVehicle
-                  ? "No chauffeur — accommodation only"
-                  : selectedVehicle
-                    ? vehicleLabel(selectedVehicle)
-                    : "Choose a vehicle"}
-              </Button>
-            }
-          >
-            <Menu.Item
-              onPress={() => {
-                setVehicleMenuOpen(false);
-                setForm((f) => ({
-                  ...f,
-                  noVehicle: true,
-                  vehicleId: null,
-                  driverId: null,
-                  // Clear per-day rates — they don't apply without a vehicle.
-                  dayDetails: {},
-                }));
-              }}
-              title="No chauffeur — accommodation only"
-              leadingIcon={form.noVehicle ? "check" : undefined}
-            />
-            {vehicles
-              .filter((v) => v.is_active)
-              .map((v) => (
-                <Menu.Item
-                  key={v.id}
-                  onPress={() => pickVehicle(v)}
-                  title={vehicleLabel(v)}
-                  leadingIcon={
-                    !form.noVehicle && form.vehicleId === v.id
-                      ? "check"
-                      : undefined
-                  }
-                />
-              ))}
-          </Menu>
+            vehicles={vehicles.filter((v) => v.is_active)}
+            selectedId={form.noVehicle ? null : form.vehicleId}
+            onSelect={pickVehicle}
+            extras={[
+              {
+                key: "none",
+                title: "No chauffeur — accommodation only",
+                selected: form.noVehicle,
+                onPress: () => {
+                  setVehicleMenuOpen(false);
+                  setForm((f) => ({
+                    ...f,
+                    noVehicle: true,
+                    vehicleId: null,
+                    driverId: null,
+                    // Clear per-day rates — they don't apply without a vehicle.
+                    dayDetails: {},
+                  }));
+                },
+              },
+            ]}
+          />
           {selectedVehicle && !form.noVehicle ? (
             <View style={styles.vehicleMeta}>
               <Text style={styles.metaLabel}>Driver</Text>
@@ -1609,43 +1599,31 @@ function AdditionalVehicleCard({
       </View>
 
       {/* Vehicle picker — excludes vehicles already used on the proposal. */}
-      <Menu
+      <Button
+        mode="outlined"
+        onPress={() => setVehicleMenuOpen(true)}
+        style={styles.bundlePickerButton}
+        contentStyle={styles.bundlePickerButtonContent}
+        textColor={selectedVehicle ? colors.heading : colors.muted}
+      >
+        {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
+      </Button>
+      <VehiclePickerModal
         visible={vehicleMenuOpen}
         onDismiss={() => setVehicleMenuOpen(false)}
-        anchor={
-          <Button
-            mode="outlined"
-            onPress={() => setVehicleMenuOpen(true)}
-            style={styles.bundlePickerButton}
-            contentStyle={styles.bundlePickerButtonContent}
-            textColor={selectedVehicle ? colors.heading : colors.muted}
-          >
-            {selectedVehicle ? selectedVehicle.title : "Choose a vehicle"}
-          </Button>
-        }
-      >
-        {vehicles
-          .filter((v) => v.is_active && !excluded.has(v.id))
-          .map((v) => (
-            <Menu.Item
-              key={v.id}
-              onPress={() => {
-                onChange({
-                  vehicleId: v.id,
-                  driverId: v.driver?.id ?? entry.driverId,
-                  clientRatePerDay: entry.clientRatePerDay || v.price || "",
-                  driverRatePerDay:
-                    entry.driverRatePerDay ||
-                    v.driver?.default_daily_rate ||
-                    "",
-                });
-                setVehicleMenuOpen(false);
-              }}
-              title={vehicleLabel(v)}
-              leadingIcon={entry.vehicleId === v.id ? "check" : undefined}
-            />
-          ))}
-      </Menu>
+        vehicles={vehicles.filter((v) => v.is_active && !excluded.has(v.id))}
+        selectedId={entry.vehicleId}
+        onSelect={(v) => {
+          onChange({
+            vehicleId: v.id,
+            driverId: v.driver?.id ?? entry.driverId,
+            clientRatePerDay: entry.clientRatePerDay || v.price || "",
+            driverRatePerDay:
+              entry.driverRatePerDay || v.driver?.default_daily_rate || "",
+          });
+          setVehicleMenuOpen(false);
+        }}
+      />
 
       {/* Driver picker */}
       <Menu

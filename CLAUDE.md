@@ -738,6 +738,8 @@ the version without a new store build.
 Newest first. Add new entries at the top with the date in ISO
 format.
 
+- 2026-11-18: Vehicle picker fix. Paper Menu could not scroll long fleets (snapped back to top). New shared `src/components/VehiclePickerModal.tsx` (native Modal + FlatList, bounded height) now used for the vehicle pickers in NewBookingScreen (create/edit, extra vehicles) and PasteJobScreen. OTA safe.
+
 ### 2026-11-10
 
 - Paste job screen (admin): paste a job, POST `/api/admin/bookings/from-text/` creates a pending booking and opens it; Home gets Paste job and Open HQ buttons (`src/config/links.ts`). Needs the backend deployed first. JS only, OTA safe.
