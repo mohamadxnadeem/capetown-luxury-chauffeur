@@ -16,7 +16,6 @@ import {
   Button,
   Card,
   Divider,
-  Menu,
   Text,
   TextInput,
 } from "react-native-paper";
@@ -50,6 +49,7 @@ import type { CreateBookingGroupChildPayload } from "@/api/bookingGroups";
 import { ShimmerImage } from "@/components/ShimmerImage";
 import { bookingDetailUrl, driverBookingPageUrl } from "@/api/urls";
 import { formatApiError } from "@/api/errors";
+import VehiclePickerModal from "@/components/VehiclePickerModal";
 import { AddVehicleSheet } from "@/components/AddVehicleSheet";
 import { DayScheduleBar, type BarShift } from "@/components/DayScheduleBar";
 import { DayEditSheet } from "@/components/DayEditSheet";
@@ -95,46 +95,43 @@ function DayDriverMenu({
         ? `Booking driver (${bookingDriverName})`
         : "Booking driver";
   return (
-    <Menu
-      visible={open}
-      onDismiss={() => setOpen(false)}
-      anchor={
-        <TouchableOpacity
-          onPress={() => setOpen(true)}
-          disabled={disabled}
-          activeOpacity={0.85}
-          style={styles.dayDriverButton}
-        >
-          <Text style={styles.dayDriverText} numberOfLines={1}>
-            👤 {label} ▾
-          </Text>
-        </TouchableOpacity>
-      }
-    >
-      <Menu.Item
-        onPress={() => {
+    <>
+      <TouchableOpacity
+        onPress={() => setOpen(true)}
+        disabled={disabled}
+        activeOpacity={0.85}
+        style={styles.dayDriverButton}
+      >
+        <Text style={styles.dayDriverText} numberOfLines={1}>
+          👤 {label} ▾
+        </Text>
+      </TouchableOpacity>
+      <VehiclePickerModal
+        visible={open}
+        onDismiss={() => setOpen(false)}
+        heading="Choose a driver"
+        vehicles={drivers}
+        getLabel={(d) => d.full_name}
+        selectedId={own}
+        onSelect={(d) => {
           setOpen(false);
-          onPick(null);
+          onPick(d.id);
         }}
-        title={
-          bookingDriverName
-            ? `Booking driver (${bookingDriverName})`
-            : "Booking driver"
-        }
-        leadingIcon={own == null ? "check" : undefined}
+        extras={[
+          {
+            key: "booking",
+            title: bookingDriverName
+              ? `Booking driver (${bookingDriverName})`
+              : "Booking driver",
+            selected: own == null,
+            onPress: () => {
+              setOpen(false);
+              onPick(null);
+            },
+          },
+        ]}
       />
-      {drivers.map((d) => (
-        <Menu.Item
-          key={d.id}
-          onPress={() => {
-            setOpen(false);
-            onPick(d.id);
-          }}
-          title={d.full_name}
-          leadingIcon={own === d.id ? "check" : undefined}
-        />
-      ))}
-    </Menu>
+    </>
   );
 }
 
@@ -699,54 +696,48 @@ export default function BookingDetailScreen() {
               <View style={styles.driverPickerRow}>
                 <Text style={styles.rowLabel}>Driver</Text>
                 <View style={styles.driverPickerAnchor}>
-                  <Menu
+                  <TouchableOpacity
+                    onPress={() => setDriverMenuOpen(true)}
+                    activeOpacity={0.85}
+                    style={styles.driverPickerButton}
+                  >
+                    <Text
+                      style={[
+                        styles.driverPickerText,
+                        !booking.driver && styles.driverPickerTextMuted,
+                      ]}
+                    >
+                      {booking.driver?.full_name ?? "Tap to assign…"}
+                    </Text>
+                    <Text style={styles.driverPickerChevron}>▾</Text>
+                  </TouchableOpacity>
+                  <VehiclePickerModal
                     visible={driverMenuOpen}
                     onDismiss={() => setDriverMenuOpen(false)}
-                    anchor={
-                      <TouchableOpacity
-                        onPress={() => setDriverMenuOpen(true)}
-                        activeOpacity={0.85}
-                        style={styles.driverPickerButton}
-                      >
-                        <Text
-                          style={[
-                            styles.driverPickerText,
-                            !booking.driver && styles.driverPickerTextMuted,
-                          ]}
-                        >
-                          {booking.driver?.full_name ?? "Tap to assign…"}
-                        </Text>
-                        <Text style={styles.driverPickerChevron}>▾</Text>
-                      </TouchableOpacity>
-                    }
-                  >
-                    <Menu.Item
-                      onPress={() => assignDriver(null)}
-                      title="No driver"
-                      leadingIcon={!booking.driver ? "check" : undefined}
-                    />
-                    {(driversQuery.data ?? [])
-                      .filter((d) => d.is_active)
-                      .map((d) => (
-                        <Menu.Item
-                          key={d.id}
-                          onPress={() => assignDriver(d.id)}
-                          title={d.full_name}
-                          leadingIcon={
-                            booking.driver?.id === d.id ? "check" : undefined
-                          }
-                        />
-                      ))}
-                    <Divider />
-                    <Menu.Item
-                      onPress={() => {
-                        setDriverMenuOpen(false);
-                        navigation.navigate("DriverList");
-                      }}
-                      title="Add new driver…"
-                      leadingIcon="plus"
-                    />
-                  </Menu>
+                    heading="Choose a driver"
+                    vehicles={(driversQuery.data ?? []).filter(
+                      (d) => d.is_active
+                    )}
+                    getLabel={(d) => d.full_name}
+                    selectedId={booking.driver?.id}
+                    onSelect={(d) => assignDriver(d.id)}
+                    extras={[
+                      {
+                        key: "none",
+                        title: "No driver",
+                        selected: !booking.driver,
+                        onPress: () => assignDriver(null),
+                      },
+                      {
+                        key: "add",
+                        title: "Add new driver…",
+                        onPress: () => {
+                          setDriverMenuOpen(false);
+                          navigation.navigate("DriverList");
+                        },
+                      },
+                    ]}
+                  />
                 </View>
               </View>
             ) : (

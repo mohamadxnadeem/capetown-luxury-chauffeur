@@ -20,7 +20,7 @@ import { vehicleLabel } from "@/utils/vehicle";
 
 type PickerVehicle = {
   id: number;
-  title: string;
+  title?: string;
   registration_number?: string | null;
 };
 
@@ -40,6 +40,9 @@ type Props<V extends PickerVehicle> = {
   heading?: string;
   // Optional rows shown above the vehicles (e.g. "No chauffeur").
   extras?: VehiclePickerExtra[];
+  // Row label. Defaults to the vehicle label (title + plate). Lets the same
+  // modal serve driver pickers (pass d => d.full_name).
+  getLabel?: (v: V) => string;
 };
 
 type Row =
@@ -54,6 +57,7 @@ export default function VehiclePickerModal<V extends PickerVehicle>({
   onSelect,
   heading = "Choose a vehicle",
   extras = [],
+  getLabel,
 }: Props<V>) {
   const { height } = useWindowDimensions();
   const rows: Row[] = [
@@ -82,6 +86,8 @@ export default function VehiclePickerModal<V extends PickerVehicle>({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator
             nestedScrollEnabled
+            removeClippedSubviews={false}
+            extraData={selectedId}
             ListEmptyComponent={
               <Text style={styles.empty}>No vehicles available.</Text>
             }
@@ -92,7 +98,9 @@ export default function VehiclePickerModal<V extends PickerVehicle>({
                 : item.vehicle.id === selectedId;
               const title = isExtra
                 ? item.extra.title
-                : vehicleLabel(item.vehicle);
+                : getLabel
+                  ? getLabel(item.vehicle as V)
+                  : vehicleLabel(item.vehicle as { title: string });
               return (
                 <TouchableOpacity
                   activeOpacity={0.7}

@@ -996,39 +996,34 @@ export default function NewBookingScreen() {
           {selectedVehicle && !form.noVehicle ? (
             <View style={styles.vehicleMeta}>
               <Text style={styles.metaLabel}>Driver</Text>
-              <Menu
+              <Button
+                mode="outlined"
+                onPress={() => setDriverMenuOpen(true)}
+                style={styles.driverPickerButton}
+                contentStyle={styles.driverPickerButtonContent}
+                textColor={effectiveDriver ? colors.heading : colors.muted}
+              >
+                {effectiveDriver
+                  ? effectiveDriver.full_name
+                  : "No driver assigned"}
+              </Button>
+              <VehiclePickerModal
                 visible={driverMenuOpen}
                 onDismiss={() => setDriverMenuOpen(false)}
-                anchor={
-                  <Button
-                    mode="outlined"
-                    onPress={() => setDriverMenuOpen(true)}
-                    style={styles.driverPickerButton}
-                    contentStyle={styles.driverPickerButtonContent}
-                    textColor={effectiveDriver ? colors.heading : colors.muted}
-                  >
-                    {effectiveDriver
-                      ? effectiveDriver.full_name
-                      : "No driver assigned"}
-                  </Button>
-                }
-              >
-                <Menu.Item
-                  onPress={() => pickDriver(null)}
-                  title="No driver assigned"
-                  leadingIcon={form.driverId == null ? "check" : undefined}
-                />
-                {drivers.map((d) => (
-                  <Menu.Item
-                    key={d.id}
-                    onPress={() => pickDriver(d.id)}
-                    title={d.full_name}
-                    leadingIcon={
-                      form.driverId === d.id ? "check" : undefined
-                    }
-                  />
-                ))}
-              </Menu>
+                heading="Choose a driver"
+                vehicles={drivers}
+                getLabel={(d) => d.full_name}
+                selectedId={form.driverId}
+                onSelect={(d) => pickDriver(d.id)}
+                extras={[
+                  {
+                    key: "none",
+                    title: "No driver assigned",
+                    selected: form.driverId == null,
+                    onPress: () => pickDriver(null),
+                  },
+                ]}
+              />
               <Text style={[styles.metaLabel, { marginTop: 10 }]}>Rate</Text>
               <Text style={styles.metaValue}>R {selectedVehicle.price} / day</Text>
             </View>
@@ -1626,41 +1621,38 @@ function AdditionalVehicleCard({
       />
 
       {/* Driver picker */}
-      <Menu
+      <Button
+        mode="outlined"
+        onPress={() => setDriverMenuOpen(true)}
+        style={[styles.bundlePickerButton, { marginTop: 8 }]}
+        contentStyle={styles.bundlePickerButtonContent}
+        textColor={selectedDriver ? colors.heading : colors.muted}
+      >
+        {selectedDriver ? selectedDriver.full_name : "No driver assigned"}
+      </Button>
+      <VehiclePickerModal
         visible={driverMenuOpen}
         onDismiss={() => setDriverMenuOpen(false)}
-        anchor={
-          <Button
-            mode="outlined"
-            onPress={() => setDriverMenuOpen(true)}
-            style={[styles.bundlePickerButton, { marginTop: 8 }]}
-            contentStyle={styles.bundlePickerButtonContent}
-            textColor={selectedDriver ? colors.heading : colors.muted}
-          >
-            {selectedDriver ? selectedDriver.full_name : "No driver assigned"}
-          </Button>
-        }
-      >
-        <Menu.Item
-          onPress={() => {
-            onChange({ driverId: null });
-            setDriverMenuOpen(false);
-          }}
-          title="No driver assigned"
-          leadingIcon={entry.driverId == null ? "check" : undefined}
-        />
-        {drivers.map((d) => (
-          <Menu.Item
-            key={d.id}
-            onPress={() => {
-              onChange({ driverId: d.id });
+        heading="Choose a driver"
+        vehicles={drivers}
+        getLabel={(d) => d.full_name}
+        selectedId={entry.driverId}
+        onSelect={(d) => {
+          onChange({ driverId: d.id });
+          setDriverMenuOpen(false);
+        }}
+        extras={[
+          {
+            key: "none",
+            title: "No driver assigned",
+            selected: entry.driverId == null,
+            onPress: () => {
+              onChange({ driverId: null });
               setDriverMenuOpen(false);
-            }}
-            title={d.full_name}
-            leadingIcon={entry.driverId === d.id ? "check" : undefined}
-          />
-        ))}
-      </Menu>
+            },
+          },
+        ]}
+      />
 
       <View style={[styles.row, { marginTop: 10 }]}>
         <TextInput
