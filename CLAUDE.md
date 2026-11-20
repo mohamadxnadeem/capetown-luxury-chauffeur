@@ -738,6 +738,8 @@ the version without a new store build.
 Newest first. Add new entries at the top with the date in ISO
 format.
 
+- 2026-11-20: Vehicle detail "Monthly report" card: month picker plus Download PDF. POSTs `/api/admin/vehicles/<id>/monthly-report-link/` `{month:"YYYY-MM"}` and opens the returned `url` with Linking (no new native modules). Needs the backend deployed first. JS only, OTA safe for 0.2.0.
+
 - 2026-11-18: Edit booking pickers: driver choosers (edit form, extra vehicle card, booking detail, per-day driver) now use the bounded VehiclePickerModal (new getLabel prop) instead of Paper Menu, so no list snaps back on release. JS only, OTA safe for 0.2.0.
 
 - 2026-11-18: Vehicle picker fix. Paper Menu could not scroll long fleets (snapped back to top). New shared `src/components/VehiclePickerModal.tsx` (native Modal + FlatList, bounded height) now used for the vehicle pickers in NewBookingScreen (create/edit, extra vehicles) and PasteJobScreen. OTA safe.
