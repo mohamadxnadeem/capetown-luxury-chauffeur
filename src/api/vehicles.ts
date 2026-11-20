@@ -161,3 +161,26 @@ export async function deleteVehiclePhoto(
     `/api/admin/vehicles/${vehicleId}/photos/${photoId}/delete/`
   );
 }
+
+// ---- Monthly booking report -------------------------------------------
+
+export interface VehicleMonthlyReportLink {
+  url: string;
+  filename: string;
+  month: string;
+  vehicle_id: number;
+  vehicle_title: string;
+  booked_days: number;
+  expires_at: string;
+}
+
+export async function fetchVehicleMonthlyReportLink(
+  vehicleId: number | string,
+  month: string
+): Promise<VehicleMonthlyReportLink> {
+  const resp = await api.post<VehicleMonthlyReportLink>(
+    `/api/admin/vehicles/${vehicleId}/monthly-report-link/`,
+    { month }
+  );
+  return resp.data;
+}

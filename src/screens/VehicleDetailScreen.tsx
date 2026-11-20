@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo } from "react";
-import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
+import { Alert, Linking, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
 import {
   ActivityIndicator,
   Button,
+  IconButton,
   Snackbar,
   Text,
 } from "react-native-paper";
@@ -22,6 +23,8 @@ import {
 } from "@/hooks/useBookings";
 import type { BookedSlot } from "@/api/bookings";
 import { apiBaseUrl } from "@/api/client";
+import { formatApiError } from "@/api/errors";
+import { fetchVehicleMonthlyReportLink } from "@/api/vehicles";
 import type { RootStackParamList } from "@/navigation/types";
 import { DayBookingsTimeline } from "@/components/DayBookingsTimeline";
 import { calendarTheme, colors } from "@/theme";
@@ -285,6 +288,8 @@ export default function VehicleDetailScreen() {
         }}
       />
 
+      <MonthlyReportSection vehicleId={vehicleId} />
+
       <Snackbar
         visible={copiedMessage !== null}
         onDismiss={() => setCopiedMessage(null)}
@@ -294,6 +299,113 @@ export default function VehicleDetailScreen() {
         {copiedMessage}
       </Snackbar>
     </ScrollView>
+  );
+}
+
+// ---- Monthly report sub-component -------------------------------------
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June", "July",
+  "August", "September", "October", "November", "December",
+];
+
+function monthKey(year: number, monthIndex: number): string {
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+
+function shiftMonth(key: string, delta: number): string {
+  const [y, m] = key.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return monthKey(d.getFullYear(), d.getMonth());
+}
+
+function MonthlyReportSection({ vehicleId }: { vehicleId: number }) {
+  const now = new Date();
+  const currentKey = monthKey(now.getFullYear(), now.getMonth());
+  const maxKey = shiftMonth(currentKey, 1);
+  const [month, setMonth] = React.useState(currentKey);
+  const [loading, setLoading] = React.useState(false);
+  const [emptyUrl, setEmptyUrl] = React.useState<string | null>(null);
+
+  const openUrl = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch (err: unknown) {
+      Alert.alert("Couldn't open report", formatApiError(err));
+    }
+  };
+
+  const onDownload = async () => {
+    setEmptyUrl(null);
+    setLoading(true);
+    try {
+      const link = await fetchVehicleMonthlyReportLink(vehicleId, month);
+      if (link.booked_days === 0) {
+        setEmptyUrl(link.url);
+      } else {
+        await openUrl(link.url);
+      }
+    } catch (err: unknown) {
+      Alert.alert("Couldn't create report", formatApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const changeMonth = (delta: number) => {
+    setEmptyUrl(null);
+    setMonth((m) => shiftMonth(m, delta));
+  };
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>MONTHLY REPORT</Text>
+      <View style={styles.reportCard}>
+        <Text style={styles.sectionHint}>
+          PDF of every confirmed booking day and time for this vehicle.
+        </Text>
+        <View style={styles.monthRow}>
+          <IconButton
+            icon="chevron-left"
+            onPress={() => changeMonth(-1)}
+            disabled={loading}
+            accessibilityLabel="Previous month"
+          />
+          <Text style={styles.monthLabel}>{monthLabel(month)}</Text>
+          <IconButton
+            icon="chevron-right"
+            onPress={() => changeMonth(1)}
+            disabled={loading || month >= maxKey}
+            accessibilityLabel="Next month"
+          />
+        </View>
+        {emptyUrl ? (
+          <View style={styles.emptyNote}>
+            <Text style={styles.emptyNoteText}>
+              No confirmed bookings in {monthLabel(month)}
+            </Text>
+            <Button mode="text" onPress={() => openUrl(emptyUrl)}>
+              Open anyway
+            </Button>
+          </View>
+        ) : null}
+        <Button
+          mode="contained"
+          icon="file-pdf-box"
+          onPress={onDownload}
+          loading={loading}
+          disabled={loading}
+          contentStyle={styles.rotateButtonContent}
+        >
+          Download PDF
+        </Button>
+      </View>
+    </View>
   );
 }
 
@@ -511,6 +623,23 @@ const styles = StyleSheet.create({
   },
   rotateButtonContent: { height: 44 },
   rotateButtonLabel: { fontWeight: "700", letterSpacing: 0.3, fontSize: 13 },
+
+  reportCard: {
+    padding: 14,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  monthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  monthLabel: { color: colors.heading, fontWeight: "700", fontSize: 16 },
+  emptyNote: { alignItems: "center", marginBottom: 8 },
+  emptyNoteText: { color: colors.muted, fontSize: 13 },
 
   snackbar: {
     backgroundColor: colors.heading,
